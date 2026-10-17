@@ -6,6 +6,14 @@ validates the quotes and calculates the score. The default demo stays entirely l
 
 ![React to Django, bounded parsing, optional Bedrock extraction, evidence validation, deterministic scoring and owner-scoped storage.](docs/assets/architecture.svg)
 
+## Understand and rebuild
+
+Start with [the scenario and numbered flow](docs/design.md), follow [the architectural
+decisions](docs/decisions/0001-durable-background-work.md), then use [the ordered rebuild
+guide](docs/implementation-guide.md). [Research and current contracts](docs/research.md)
+explain the sources behind those choices. UI job progress and log search are planned
+next; the durable jobs API is already verified.
+
 ## Run locally
 
 Install Docker with Compose and start your Docker runtime. From the repository root:

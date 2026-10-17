@@ -1,5 +1,11 @@
 # Evidence before scoring
 
+> Upgrade status: the durable jobs API/relay/worker are verified. See
+> [the current design and decisions](design.md) for that asynchronous flow. The diagram
+> below documents the initial synchronous path, retained temporarily for the old UI;
+> job-aware UI, observability and replacement diagrams follow in separate milestones.
+
+
 This fictional recruiting workbench demonstrates a trust boundary: an AI provider can
 propose résumé evidence, but application code validates it and calculates the score.
 It is an architecture lab with enterprise-oriented controls, not a production hiring platform.
