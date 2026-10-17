@@ -88,8 +88,8 @@ stale responses. See [ADR 0002](decisions/0002-evidence-and-data-boundaries.md).
 
 API, relay and worker export fixed lifecycle metadata to OpenObserve through bounded
 OpenTelemetry background batches. Correlate using the request/job IDs shown in the UI.
-See [ADR 0004](decisions/0004-searchable-observability.md) and the README's exact search
-and verification evidence. Lifecycle logs exclude document text, quotes, prompts, provider payloads,
+See [ADR 0004](decisions/0004-searchable-observability.md), the [exact log search](implementation-guide.md#search-one-job-across-services)
+and [verification evidence](implementation-guide.md#verified-local-behavior). Lifecycle logs exclude document text, quotes, prompts, provider payloads,
 filenames, usernames, credentials, cookies, headers and raw exceptions.
 
 | Safe field | Operational question |

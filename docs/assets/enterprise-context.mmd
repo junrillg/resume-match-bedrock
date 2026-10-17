@@ -1,15 +1,13 @@
-flowchart LR
-  accTitle: Proposed production context, separate from the local lab
-  accDescr: Every component is proposed, not deployed. A production design adds identity, protected ingress, managed durable infrastructure, operational retention and evaluation around the same application boundaries.
+%% Logical flow companion. enterprise-context.svg is the editable publication source.
+%% Its Bedrock graphic embeds aws/Arch_Amazon-Bedrock_64.svg; see aws/NOTICE.md.
+flowchart TB
+  accTitle: Production context, proposed and not deployed
+  accDescr: All deployment components below remain proposed and unverified. Generic database, broker and identity components do not designate AWS services.
   subgraph Proposed["Proposed enterprise deployment · NOT provisioned or verified"]
-    U["Reviewer"] --> I["TLS ingress / rate controls"] --> A["API + tenant authorization"]
-    S["Organization identity / SSO"] --> A
-    A --> D[("Managed PostgreSQL\nBackups + restore drills")]
-    D --> R["Outbox relay"] --> Q["Durable broker\nHA / capacity plan"] --> W["Isolated workers\nResource + concurrency limits"]
-    W --> D
-    W --> B["Approved Bedrock\nIAM + spend + data policy"]
-    W -. "Safe diagnostics" .-> O["Central observability\nAlerts + access + retention"]
-    A -. "Safe diagnostics" .-> O
+    U["Reviewer → protected ingress<br/>TLS, rate controls, organization identity / SSO"] --> A["API + tenant authorization<br/>Bounded document admission"]
+    A --> D[("Managed PostgreSQL<br/>Jobs + outbox + results; backups + restore drills")]
+    D --> R["Outbox relay → durable broker<br/>Acknowledgments; HA + capacity plan"] --> W["Isolated workers<br/>Resource limits; lease, retry, validation"]
+    W -->|"Fenced result commit"| D
+    W --> B["<img src='aws/Arch_Amazon-Bedrock_64.svg' width='48' height='48'/><br/>Amazon Bedrock<br/>IAM, spend, data policy and model evaluation"]
+    W -. "API / relay / worker safe metadata" .-> O["Central observability<br/>Access, alerts, retention and operational ownership"]
   end
-  classDef proposed fill:#f1f1ef,stroke:#6b7280,stroke-dasharray:5 5;
-  class U,I,S,A,D,R,Q,W,B,O proposed;

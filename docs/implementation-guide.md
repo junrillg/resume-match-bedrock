@@ -1,9 +1,13 @@
 # Implementation reference
 
-This reference maps the [design](design.md) and [architecture decisions](decisions/0001-durable-background-work.md)
-to the implemented components, their guarantees and operating checks. The repository
-runs one authenticated résumé comparison flow with synthetic data; the local provider
-exercises the complete infrastructure path without AWS credentials.
+Use this reference for a specific implementation or operating question. For the full
+flow, read [the architecture](architecture.md); for requirements and rationale, see
+[the design](design.md), [decisions](decisions/0001-durable-background-work.md) and
+[primary research](research.md). All runtime examples use synthetic documents.
+
+- **Run or inspect:** [startup](#runtime-and-entry-point), [log search](#search-one-job-across-services).
+- **Review contracts:** [documents](#document-and-evidence-boundary), [API](#asynchronous-jobs-api), [delivery](#delivery-processing-and-recovery), [browser](#browser-state-and-isolation).
+- **Check evidence:** [commands](#verification-commands), [observed behavior](#verified-local-behavior), [build history](#actual-build-history).
 
 ## Runtime and entry point
 
@@ -24,7 +28,15 @@ Run `./scripts/lab up`, then `./scripts/lab status`. The application listens on
 broker ports remain inside Compose. `./scripts/lab credentials` displays generated
 local logins in the operator's terminal. Credentials live in ignored, owner-only `.env`.
 Ordinary startup preserves existing credentials and volumes; `./scripts/lab down`
-stops the stack without removing its data.
+stops the stack without removing its data. Keep `.env` with those volumes: replacing
+its passwords does not update credentials already initialized in them. An existing
+SQLite development database is separate and untouched. This is a local HTTP stack
+with Django debug enabled; it must not be exposed as an internet deployment.
+
+Startup waits for dependencies, applies migrations and creates the synthetic `lab`
+account once. nginx refreshes the API address through Docker DNS after container
+recreation, preventing stale upstream 502s. The pinned nginx supports the
+[OSS upstream resolver](https://nginx.org/en/docs/http/ngx_http_upstream_module.html).
 
 ## Document and evidence boundary
 
@@ -35,10 +47,30 @@ checks source membership and skill boundaries, then calculates weighted literal 
 mocked provider contracts. Forged quotes and SQL extracted only from MySQL are rejected.
 The synthetic Python/Django/React sample scores 80% against the default four requirements.
 
-The model does not own the score. A valid quote does not prove competence, positive
-experience or document truth. Bedrock remains disabled in Compose; its adapter is
-verified with mocked SDK responses. See [ADR 0002](decisions/0002-evidence-and-data-boundaries.md)
-for data retention and external-provider boundaries.
+Selectable-text PDF and UTF-8 TXT uploads are limited to 1 MiB; pasted/extracted text
+to 30,000 characters. OCR and DOCX are unsupported. Requirements are 1–20 unique skills
+with integer weights from 1–10. Scores do not infer aliases, competence, experience
+duration, negation or document truth; each quote still needs human review.
+
+Source text is temporarily stored while queued/running and cleared on success/failure
+or removed on deletion. Evidence excerpts remain until result deletion. Clearing live
+rows does not erase historical backups. See [ADR 0002](decisions/0002-evidence-and-data-boundaries.md).
+
+<details>
+<summary>Bedrock activation boundary — disabled locally</summary>
+
+Compose uses the local literal extractor and mounts no AWS credentials. The Bedrock
+adapter is verified with mocked SDK responses; live account access and model behavior
+remain unverified. Application code owns evidence validation and the score.
+
+A later authorized integration needs an approved account, region, Converse model and
+spend limit, server-side worker credentials, matching API/worker provider configuration,
+and resource-scoped `bedrock:InvokeModel` permission. Review model support, cross-region
+inference and invocation logging first. Credentials never belong in browser code,
+Git or command arguments. Timeouts, attempts and tokens are bounded; provider failures
+never fall back to a demo score.
+
+</details>
 
 ## Durable admission
 
@@ -54,6 +86,23 @@ Admission remains possible during a broker outage because PostgreSQL owns accept
 [`test_jobs.py`](../backend/matching/test_jobs.py) verifies admission and concurrency
 against PostgreSQL. See [ADR 0001](decisions/0001-durable-background-work.md).
 
+## Asynchronous jobs API
+
+Session cookies, CSRF and owner-scoped access apply throughout. New comparisons use
+jobs; the matches API retains read/delete access to existing reports and rejects POST.
+
+| Endpoint | Contract |
+| --- | --- |
+| `POST /api/jobs/` | Multipart résumé/requirements form plus UUID `Idempotency-Key`; returns 202 and the durable job. |
+| `GET /api/jobs/` | The current owner's latest 100 jobs. |
+| `GET /api/jobs/<id>/` | State, attempts, safe error code and completed match when available. |
+| `DELETE /api/jobs/<id>/` | Removes the owned job and result. |
+
+Identical owner/key/normalized payload returns the same job without another quota
+charge. Reusing a key with different input returns 409. Admission allows 20 new logical
+jobs per owner per UTC day. States are queued, running, succeeded and failed; acceptance
+is not completion. Saved-report history is limited to the latest 100 results.
+
 ## Delivery, processing and recovery
 
 [`jobs.py`](../backend/matching/jobs.py) publishes UUID-only persistent messages to a
@@ -65,10 +114,14 @@ business job lifecycle.
 
 A worker claims under a short locked transaction, extracts outside the transaction and
 finishes only with a current lease token. Recovery handles expired leases and stale
-queued wakeups within finite attempts and deadlines. Duplicate or stale completion
-cannot create a second committed result. This guarantee does not prevent repeated
-external provider calls or charges. PostgreSQL concurrency tests cover these boundaries;
-SQLite alone cannot demonstrate row-lock behavior.
+queued wakeups within three claims, 2/4-second retry backoff and a ten-minute total
+deadline. Leases last 90 seconds. Duplicate or stale completion cannot create a second
+committed result. This guarantee does not prevent repeated external provider calls or charges. PostgreSQL concurrency tests cover these boundaries;
+SQLite alone cannot demonstrate row-lock behavior. No Redis, result backend, Beat or
+Celery retry state is required; PostgreSQL owns the lifecycle.
+
+<details>
+<summary>Reproduce broker and worker interruption</summary>
 
 For a local synthetic worker interruption, run `docker compose stop worker`, submit
 the synthetic sample and observe queued state, then run `docker compose start worker`.
@@ -79,6 +132,8 @@ unsent dispatch intent. Verify final state and attempt count after recovery.
 These commands affect this repository's Compose project; keep its volumes and avoid
 unrelated containers. The [failure sequence](architecture.md#failure-and-recovery)
 explains the persisted state at each boundary.
+
+</details>
 
 ## Browser state and isolation
 
@@ -107,11 +162,43 @@ filenames, credentials and raw exceptions are excluded. Arbitrary root logs are 
 forwarded, and business paths never wait for a telemetry flush.
 
 [`test_telemetry.py`](../backend/matching/test_telemetry.py) covers privacy and exporter
-failure behavior. The [README search instructions](../README.md#search-one-job-across-services)
-provide the exact local login and query procedure. Verify records for one synthetic job;
-stop OpenObserve and verify jobs still complete. Bounded best-effort telemetry may lose
-events; PostgreSQL remains the business ledger. See
-[ADR 0004](decisions/0004-searchable-observability.md) for resource limits and retention.
+failure behavior. PostgreSQL remains the business ledger; logs are best-effort diagnostics,
+not a distributed trace or durable audit ledger.
+
+### Search one job across services
+
+Open <http://127.0.0.1:5080> with the viewer login shown by `./scripts/lab credentials`
+in your private terminal. Select organization `default`, stream `resume_match` and a
+time range covering the submission. Enable SQL mode and paste the request ID from the UI:
+
+```sql
+SELECT * FROM "resume_match"
+WHERE request_id = 'PASTE_REQUEST_UUID'
+ORDER BY _timestamp ASC
+```
+
+Look for API admission, relay confirmation and worker completion/retry/failure events.
+Safe fields include validated IDs, status, attempt, elapsed time and error code.
+[Search screenshot](assets/log-search.png).
+
+<details>
+<summary>Export limits, retention and viewer outage</summary>
+
+The exporter uses a 256-record queue, batches of 32, a one-second schedule and a
+0.5-second HTTP timeout. It never flushes or waits in the business path. Events can be
+lost on buffer overflow, viewer outage or process exit; stdout remains a fallback.
+For a synthetic outage check, stop the viewer with `docker compose stop openobserve`,
+submit a comparison and verify completion, then restore it with `docker compose start openobserve`.
+
+OpenObserve OSS v1.1.1 is pinned by digest and runs nonroot with a static HTTP health
+probe, 1 GiB container limit, 64/16 MiB memtable/in-memory file limits, 256 MiB query pool
+and disabled caches. Three-day retention is checked hourly with a 120-minute file-delete
+delay; a 1024 MiB free-space circuit breaker protects disk. This is not a hard byte quota
+on its named volume. Startup adds a missing viewer password atomically while preserving
+existing secrets and owner-only `.env` permissions. [ADR 0004](decisions/0004-searchable-observability.md)
+records the image digest, implementation rationale and trade-offs.
+
+</details>
 
 ## Verification commands
 
@@ -121,10 +208,48 @@ docker compose exec -T api python manage.py check
 docker compose exec -T api python manage.py makemigrations --check --dry-run
 ```
 
-The [README](../README.md#verify) records observed test, runtime and failure-check results.
-These establish the documented local behavior, not live Bedrock access, production
-capacity or high availability. The [broader deployment discussion](architecture.md#what-a-broader-deployment-would-add)
-identifies the additional operational design required for production.
+Frontend unit/build checks require local Node.js 22.12+ and npm. They complement the
+complete Compose runtime check:
+
+```sh
+cd frontend
+npm ci
+npm test
+npm run build
+```
+
+## Verified local behavior
+
+The recorded verification covers 62 backend tests on Compose PostgreSQL, 15 frontend
+tests, the TypeScript/Vite production build and three startup-helper checks. Backend
+coverage includes input/scoring boundaries, owner isolation, CSRF, provider contracts,
+concurrent idempotent admission, duplicate workers and deletion/completion fencing.
+
+<details>
+<summary>Runtime, recovery and observability evidence</summary>
+
+- All seven services passed health checks. The nginx/session smoke check covered CSRF
+  rejection, login, the synthetic 80% match, saved history and deletion.
+- Real-broker checks covered queued work with the worker paused, HTTP 202 during broker
+  outage, durable messages surviving broker restart and completion after worker restart.
+  Completed jobs held one result and cleared temporary source text.
+- OpenObserve returned eight complete lifecycle records across API, relay and worker,
+  without document or credential fields. With the viewer stopped, admission took
+  0.057 seconds and the worker completed an 80% comparison in 1.643 seconds.
+- An isolated Compose project with fresh volumes started through `lab up`, processed its
+  first 80% job and exported four searchable events. Only its temporary volumes were
+  removed; the original stack and history were restored.
+- Chrome checks confirmed the 80% sample on desktop and a mobile viewport.
+  [Evidence report screenshot](assets/workbench.png).
+
+These are observations from local checks, not throughput benchmarks or production SLAs.
+
+</details>
+
+Live Bedrock access and model accuracy remain unverified. The single-node deployment
+does not establish capacity or high availability. The [broader deployment discussion](architecture.md#what-a-broader-deployment-would-add)
+covers SSO/RBAC, organization isolation, TLS/network protections, retention and backups,
+abuse controls, alerts and model evaluation still needed for production.
 
 ## Actual build history
 
