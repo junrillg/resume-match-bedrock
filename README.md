@@ -36,7 +36,8 @@ with those volumes; it holds their existing passwords. `./scripts/lab help` list
 
 ## Review the design
 
-- [Architecture and recovery](docs/architecture.md): numbered flow, trust boundaries and failure behavior.
+- [One request in three phases](docs/architecture.md#one-request-in-three-phases): admission, processing and result rendering.
+- [Recovery and boundaries](docs/architecture.md#failure-and-recovery): what survives interruptions and what the design guarantees.
 - [Decisions](docs/decisions/0001-durable-background-work.md): why PostgreSQL, RabbitMQ and bounded workers.
 - [Implementation reference](docs/implementation-guide.md): source map, API, log search, checks and observed results.
 

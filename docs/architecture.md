@@ -1,4 +1,4 @@
-# Trace one résumé comparison
+# Résumé comparison execution
 
 Read [the scenario and vocabulary](design.md) first. This reference implements one
 enterprise reliability pattern: durable admission of slow work, repeatable delivery,
@@ -10,25 +10,87 @@ Solid numbered arrows carry business work. Dotted arrows carry diagnostic metada
 or the explicitly disabled external-provider option. All local services start together
 with `./scripts/lab up`; database and broker ports remain private to Compose.
 
-## Walk the successful input
+## One request in three phases
 
-The synthetic sample mentions Python, Django and React. Requirements assign weights
-3, 3, 2 and 2 to those skills and PostgreSQL. Application code counts 8 matched weight
-out of 10: 80%. This measures literal evidence coverage, not candidate quality,
-competence or a hiring recommendation.
+The synthetic sample mentions Python, Django and React. Their weights are 3, 3 and 2;
+PostgreSQL adds an unmatched weight of 2. Validated coverage is `(3 + 3 + 2) / 10 = 80%`.
+The score describes document evidence, not candidate quality.
 
-| Step | What happens and why | Source / check |
-| --- | --- | --- |
-| 1 | React sends session cookies, CSRF and a UUID idempotency key. Ambiguous retries retain the key for the same payload. | [App](../frontend/src/App.tsx), [API helper](../frontend/src/api.ts), [UI regressions](../frontend/src/App.test.tsx) |
-| 2 | Django authenticates, bounds input, normalizes selectable PDF/TXT text, then commits Job + Outbox together. `202` means accepted. | [jobs view](../backend/matching/views.py), [models](../backend/matching/models.py), [admission tests](../backend/matching/test_jobs.py) |
-| 3–4 | The relay publishes a persistent UUID-only message to the declared durable queue. It marks sent after publisher confirmation. | [relay_once / publish_job](../backend/matching/jobs.py), [relay command](../backend/matching/management/commands/relay_jobs.py) |
-| 5 | A worker locks briefly to claim a 90-second lease. Extraction occurs outside that transaction; the token fences completion. | [claim_job / run_job](../backend/matching/jobs.py), [task configuration](../backend/config/celery.py) |
-| 6 | The validator rejects invented evidence and partial-word tricks. The server computes the score. Current-token completion saves one result and clears temporary source text atomically. | [services](../backend/matching/services.py), [finish_job](../backend/matching/jobs.py), [boundary tests](../backend/matching/tests.py) |
-| 7 | Owner-scoped GET shows queued/running/succeeded/failed and the report. Polling is non-overlapping, bounded per request, paused on errors and stopped at terminal state. | [job API](../backend/matching/views.py), [React lifecycle tests](../frontend/src/App.test.tsx) |
+### 1. Admit the request
 
-PostgreSQL is the business ledger. RabbitMQ delivers repeatable wakeups. A publisher
-confirmation proves broker acceptance under its configured durability semantics; it
-does not prove worker completion. The job/result rows establish completion.
+Form events update React state; submit sends only the selected text or file. The API
+helper sends CSRF and same-origin credentials; the submit handler supplies the retry key. nginx forwards
+`/api/` to Django. Middleware establishes request identity before the view validates input.
+
+```mermaid
+sequenceDiagram
+  participant UI as React browser
+  participant API as Django API
+  participant DB as PostgreSQL
+  UI->>API: 1. POST /api/jobs/ through nginx
+  API->>API: 2. Session + CSRF + input checks
+  API->>DB: 3. One transaction: Job + OutboxEvent
+  DB-->>API: Commit succeeds
+  API-->>UI: 4. 202: durable job receipt
+```
+
+The transaction also checks owner-scoped idempotency and charges the daily quota once.
+`202` confirms a durable receipt; it does not promise a score or require a working broker.
+A repeated unchanged submission can recover that same receipt.
+
+### 2. Dispatch and process
+
+The relay publishes a wakeup after the database commit. A broker confirmation and a
+worker result are separate facts; PostgreSQL remains the business ledger.
+
+```mermaid
+sequenceDiagram
+  participant Relay
+  participant DB as PostgreSQL
+  participant MQ as RabbitMQ
+  participant Worker as Celery worker
+  Relay->>DB: 5. Lock an unsent outbox event
+  Relay->>MQ: 6. Publish persistent job UUID
+  MQ-->>Relay: Publisher confirmation
+  Relay->>DB: Mark outbox sent
+  MQ->>Worker: 7. matching.process_job(job_id)
+  Worker->>DB: 8. Lock job, claim timed lease
+  DB-->>Worker: Stored text + requirements + lease
+  Note over Worker: 9. Extract evidence<br/>Validate source quotes
+  Worker->>DB: 10. Fence lease, score, commit result
+```
+
+Extraction runs outside the claim transaction. Completion locks the job again and checks
+its current, unexpired lease token before saving one result and clearing temporary text.
+Delivery and provider calls may repeat; the result relationship is unique per job.
+A worker can consume the confirmed message before the relay commits its sent marker;
+the sequence shows responsibilities, not a cross-process ordering guarantee.
+
+### 3. Read and render the result
+
+The browser polls the **owner's job collection**, not the detail endpoint. Each response
+embeds any completed report; the UI derives its selected result from that server state.
+
+```mermaid
+sequenceDiagram
+  participant UI as React browser
+  participant API as Django API
+  participant DB as PostgreSQL
+  loop While queued/running, one request at a time
+    UI->>API: 11. GET /api/jobs/
+    API->>DB: 12. Current owner's jobs + related Match
+    DB-->>API: Durable status, attempts, optional report
+    API-->>UI: 13. JSON jobs with nested match
+  end
+  Note over UI,API: 14. MatchResult renders<br/>score and source quotes
+```
+
+Polling starts after a one-second delay, with a ten-second deadline per request. It stops
+at terminal state and pauses on network errors. A fast local job can finish between polls,
+so `running` need not appear on screen. Failed jobs display an error category without a score.
+
+The [source handoffs](implementation-guide.md#source-handoffs) map these three phases to
+exact functions, proxy configuration and route declarations.
 
 ## Failure and recovery
 

@@ -6,6 +6,7 @@ flow, read [the architecture](architecture.md); for requirements and rationale, 
 [primary research](research.md). All runtime examples use synthetic documents.
 
 - **Run or inspect:** [startup](#runtime-and-entry-point), [log search](#search-one-job-across-services).
+- **Trace implementation:** [source handoffs](#source-handoffs).
 - **Review contracts:** [documents](#document-and-evidence-boundary), [API](#asynchronous-jobs-api), [delivery](#delivery-processing-and-recovery), [browser](#browser-state-and-isolation).
 - **Check evidence:** [commands](#verification-commands), [observed behavior](#verified-local-behavior), [build history](#actual-build-history).
 
@@ -37,6 +38,38 @@ Startup waits for dependencies, applies migrations and creates the synthetic `la
 account once. nginx refreshes the API address through Docker DNS after container
 recreation, preventing stale upstream 502s. The pinned nginx supports the
 [OSS upstream resolver](https://nginx.org/en/docs/http/ngx_http_upstream_module.html).
+
+
+## Source handoffs
+
+The [three request diagrams](architecture.md#one-request-in-three-phases) show the runtime
+sequence. The lookup below pins the corresponding implementation; source links identify
+functions rather than implying every file must be read in full.
+
+<details>
+<summary>Exact source map: browser input → durable work → rendered report</summary>
+
+| Boundary | Source | Data passed / responsibility |
+| --- | --- | --- |
+| Initialize/authenticate | [App.load / login](https://github.com/junrillg/resume-match-bedrock/blob/d845dcad742087943295c3f37d556b1be53945b8/frontend/src/App.tsx#L97); [session / login](https://github.com/junrillg/resume-match-bedrock/blob/d845dcad742087943295c3f37d556b1be53945b8/backend/matching/views.py#L37) | GET session supplies CSRF and provider state; login establishes the session; jobs and existing reports reload. |
+| Capture and submit | [form events](https://github.com/junrillg/resume-match-bedrock/blob/d845dcad742087943295c3f37d556b1be53945b8/frontend/src/App.tsx#L243); [analyze](https://github.com/junrillg/resume-match-bedrock/blob/d845dcad742087943295c3f37d556b1be53945b8/frontend/src/App.tsx#L179) | State → selected text/file + weighted requirements; file bytes and extension participate in retry identity. |
+| Send HTTP | [api](https://github.com/junrillg/resume-match-bedrock/blob/d845dcad742087943295c3f37d556b1be53945b8/frontend/src/api.ts#L34); [nginx /api/](https://github.com/junrillg/resume-match-bedrock/blob/d845dcad742087943295c3f37d556b1be53945b8/frontend/nginx.conf#L35) | CSRF header, same-origin cookie and UUID key → proxy to api:8000; ten-second browser deadline. |
+| Identify and route | [middleware order](https://github.com/junrillg/resume-match-bedrock/blob/d845dcad742087943295c3f37d556b1be53945b8/backend/config/settings.py#L14); [RequestMetadataMiddleware](https://github.com/junrillg/resume-match-bedrock/blob/d845dcad742087943295c3f37d556b1be53945b8/backend/matching/middleware.py#L14); [URL patterns](https://github.com/junrillg/resume-match-bedrock/blob/d845dcad742087943295c3f37d556b1be53945b8/backend/config/urls.py#L4) | Server request UUID, body cap, session/CSRF/auth middleware → /api/jobs/ view; response is no-store. |
+| Normalize input | [read_match_form](https://github.com/junrillg/resume-match-bedrock/blob/d845dcad742087943295c3f37d556b1be53945b8/backend/matching/views.py#L92); [read_resume](https://github.com/junrillg/resume-match-bedrock/blob/d845dcad742087943295c3f37d556b1be53945b8/backend/matching/services.py#L34); [read_requirements](https://github.com/junrillg/resume-match-bedrock/blob/d845dcad742087943295c3f37d556b1be53945b8/backend/matching/services.py#L92) | Multipart text or bounded selectable PDF/TXT → normalized source and explicit unique skill/weight pairs. |
+| Admit once | [jobs](https://github.com/junrillg/resume-match-bedrock/blob/d845dcad742087943295c3f37d556b1be53945b8/backend/matching/views.py#L142); [Job / OutboxEvent](https://github.com/junrillg/resume-match-bedrock/blob/d845dcad742087943295c3f37d556b1be53945b8/backend/matching/models.py#L28) | Owner lock + key/fingerprint + quota → atomic job/outbox commit → 202 receipt. |
+| Relay UUID | [relay command](https://github.com/junrillg/resume-match-bedrock/blob/d845dcad742087943295c3f37d556b1be53945b8/backend/matching/management/commands/relay_jobs.py#L16); [relay_once / publish_job](https://github.com/junrillg/resume-match-bedrock/blob/d845dcad742087943295c3f37d556b1be53945b8/backend/matching/jobs.py#L142); [queue declaration](https://github.com/junrillg/resume-match-bedrock/blob/d845dcad742087943295c3f37d556b1be53945b8/backend/config/celery.py#L11) | Unsent outbox → confirmed persistent message on resume.match → sent marker. |
+| Claim work | [process_job](https://github.com/junrillg/resume-match-bedrock/blob/d845dcad742087943295c3f37d556b1be53945b8/backend/matching/tasks.py#L7); [run_job](https://github.com/junrillg/resume-match-bedrock/blob/d845dcad742087943295c3f37d556b1be53945b8/backend/matching/jobs.py#L89); [claim_job](https://github.com/junrillg/resume-match-bedrock/blob/d845dcad742087943295c3f37d556b1be53945b8/backend/matching/jobs.py#L45) | UUID → stored job; short row lock establishes running state, attempt and expiring lease token. |
+| Extract and verify | [extract_evidence](https://github.com/junrillg/resume-match-bedrock/blob/d845dcad742087943295c3f37d556b1be53945b8/backend/matching/services.py#L138); [validate_evidence](https://github.com/junrillg/resume-match-bedrock/blob/d845dcad742087943295c3f37d556b1be53945b8/backend/matching/services.py#L172) | Untrusted proposed quotes → checked source excerpts and literal skill mentions. |
+| Commit result | [finish_job](https://github.com/junrillg/resume-match-bedrock/blob/d845dcad742087943295c3f37d556b1be53945b8/backend/matching/jobs.py#L65) | Current unexpired lease → weighted score, unique Match + succeeded Job + cleared source, in one transaction. |
+| Read durable state | [jobs GET](https://github.com/junrillg/resume-match-bedrock/blob/d845dcad742087943295c3f37d556b1be53945b8/backend/matching/views.py#L145); [serialize_job](https://github.com/junrillg/resume-match-bedrock/blob/d845dcad742087943295c3f37d556b1be53945b8/backend/matching/views.py#L132) | Owner-scoped collection query → statuses and nested completed matches; detail GET is also available. |
+| Render | [poll effect](https://github.com/junrillg/resume-match-bedrock/blob/d845dcad742087943295c3f37d556b1be53945b8/frontend/src/App.tsx#L115); [selected result](https://github.com/junrillg/resume-match-bedrock/blob/d845dcad742087943295c3f37d556b1be53945b8/frontend/src/App.tsx#L61); [MatchResult](https://github.com/junrillg/resume-match-bedrock/blob/d845dcad742087943295c3f37d556b1be53945b8/frontend/src/App.tsx#L22) | GET collection → React job state → selected nested match → score and quotations. |
+
+The initial `Idempotency-Key`, server `request_id`, and durable `job_id` have different
+roles: deduplicate admission, correlate the accepted request, and identify business work.
+Each later HTTP status check has its own header request ID; the job payload retains its
+original request ID. Queue messages contain the job ID, never document content.
+
+</details>
 
 ## Document and evidence boundary
 
@@ -102,6 +135,20 @@ Identical owner/key/normalized payload returns the same job without another quot
 charge. Reusing a key with different input returns 409. Admission allows 20 new logical
 jobs per owner per UTC day. States are queued, running, succeeded and failed; acceptance
 is not completion. Saved-report history is limited to the latest 100 results.
+
+<details>
+<summary>Rejected input and uncertain responses</summary>
+
+- `400`: malformed form, key or bounded document/requirements validation failure.
+- `401` / `403`: missing session or failed CSRF; the UI clears account state on 401.
+- `409`: an existing idempotency key was reused with different normalized input.
+- `413`: nginx or middleware rejects a body beyond its total request limit.
+- `429`: the daily admission quota is exhausted.
+- Browser timeout, network failure or ambiguous server response: manual retry of unchanged
+  input retains its key. A failed GET pauses status updates without failing the job;
+  the explicit resume action restarts polling.
+
+</details>
 
 ## Delivery, processing and recovery
 
@@ -177,8 +224,36 @@ WHERE request_id = 'PASTE_REQUEST_UUID'
 ORDER BY _timestamp ASC
 ```
 
-Look for API admission, relay confirmation and worker completion/retry/failure events.
-Safe fields include validated IDs, status, attempt, elapsed time and error code.
+Alternatively, use `WHERE job_id = 'PASTE_JOB_UUID'` with the job ID shown in the UI.
+The accepted job's original request ID connects API, relay and worker events; a poll
+request's HTTP `X-Request-ID` identifies that separate GET. Cross-process arrival order
+can differ, and best-effort export can omit events.
+
+<details>
+<summary>Lifecycle events and safe failure categories</summary>
+
+| Event | Emitting boundary |
+| --- | --- |
+| `job.accepted` | API, after the admission transaction commits |
+| `job.published` / `job.publish_failed` | Relay, confirmed send or publication failure |
+| `job.started` | Worker, after acquiring a claim |
+| `job.succeeded` / `job.retry` / `job.failed` | Worker completion transaction, emitted on commit |
+| `job.recovered` | Relay recovery transaction, emitted on commit |
+| `job.interrupted` | Task wrapper, unexpected interruption |
+
+Allowed attributes are UUID `request_id`/`job_id`, enum `stage`/`status`/`error_code`,
+integer `attempt` (0–3), `duration_ms` (0–600000), and `service_name` (api/relay/worker, otherwise unknown).
+An event may omit attributes. The HTTP request summary is separate stdout metadata;
+arbitrary access/application logs are not forwarded to OpenObserve.
+
+Stable error categories are `invalid_evidence`, `provider_rejected`, `processing_failed`,
+`retry_exhausted`, `deadline_exceeded`, `provider_unavailable` and `publish_unavailable`.
+Transient provider failures can return the job to queued; invalid evidence fails without
+a demo fallback. See [run_job / finish_job](../backend/matching/jobs.py),
+[recovery](../backend/matching/jobs.py) and [telemetry allowlists](../backend/matching/telemetry.py).
+
+</details>
+
 [Search screenshot](assets/log-search.png).
 
 <details>
