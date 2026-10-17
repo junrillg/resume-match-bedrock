@@ -13,7 +13,8 @@ flow, read [the architecture](architecture.md); for requirements and rationale, 
 ## Runtime and entry point
 
 [`compose.yaml`](../compose.yaml) starts PostgreSQL, RabbitMQ, Django/Gunicorn, a relay,
-a Celery worker, OpenObserve and the React/nginx entry point. A migration service runs
+a Celery worker, a separate HTTP Converse contract service, OpenObserve and the
+React/nginx entry point. A migration service runs
 before the application starts. Dockerfiles pin the runtime versions; nginx provides
 the same-origin browser/API boundary.
 
@@ -22,7 +23,9 @@ the same-origin browser/API boundary.
 | [`scripts/lab`](../scripts/lab) | Startup, readiness, local credentials, status and verification commands |
 | [`backend/Dockerfile`](../backend/Dockerfile) | Python application image |
 | [`frontend/Dockerfile`](../frontend/Dockerfile) | React production build and nginx runtime |
-| [`frontend/nginx.conf`](../frontend/nginx.conf) | Static assets and API proxy with Docker DNS resolution |
+| [`frontend/nginx.conf`](../frontend/nginx.conf) | Static assets and configurable API proxy; Docker DNS locally, same-task localhost on ECS |
+| [`backend/local_converse.py`](../backend/local_converse.py) | Bounded local Converse HTTP request/response contract |
+| [`infra/terraform/`](../infra/terraform/README.md) | Separate AWS resources, bootstrap and deployment runbook |
 
 Run `./scripts/lab up`, then `./scripts/lab status`. The application listens on
 `http://127.0.0.1:8088`; OpenObserve listens on `http://127.0.0.1:5080`. Database and
@@ -51,18 +54,18 @@ functions rather than implying every file must be read in full.
 
 | Boundary | Source | Data passed / responsibility |
 | --- | --- | --- |
-| Initialize/authenticate | [App.load / login](https://github.com/junrillg/resume-match-bedrock/blob/5b7c74a4a79513b43c94bc003d04e4bcbb1ec4cd/frontend/src/App.tsx#L97); [session / login](https://github.com/junrillg/resume-match-bedrock/blob/5b7c74a4a79513b43c94bc003d04e4bcbb1ec4cd/backend/matching/views.py#L37) | GET session supplies CSRF and provider state; login establishes the session; jobs and existing reports reload. |
-| Capture and submit | [form events](https://github.com/junrillg/resume-match-bedrock/blob/5b7c74a4a79513b43c94bc003d04e4bcbb1ec4cd/frontend/src/App.tsx#L243); [analyze](https://github.com/junrillg/resume-match-bedrock/blob/5b7c74a4a79513b43c94bc003d04e4bcbb1ec4cd/frontend/src/App.tsx#L179) | State → selected text/file + weighted requirements; file bytes and extension participate in retry identity. |
-| Send HTTP | [api](https://github.com/junrillg/resume-match-bedrock/blob/5b7c74a4a79513b43c94bc003d04e4bcbb1ec4cd/frontend/src/api.ts#L34); [nginx /api/](https://github.com/junrillg/resume-match-bedrock/blob/5b7c74a4a79513b43c94bc003d04e4bcbb1ec4cd/frontend/nginx.conf#L35) | CSRF header, same-origin cookie and UUID key → proxy to api:8000; ten-second browser deadline. |
-| Identify and route | [middleware order](https://github.com/junrillg/resume-match-bedrock/blob/5b7c74a4a79513b43c94bc003d04e4bcbb1ec4cd/backend/config/settings.py#L14); [RequestMetadataMiddleware](https://github.com/junrillg/resume-match-bedrock/blob/5b7c74a4a79513b43c94bc003d04e4bcbb1ec4cd/backend/matching/middleware.py#L14); [URL patterns](https://github.com/junrillg/resume-match-bedrock/blob/5b7c74a4a79513b43c94bc003d04e4bcbb1ec4cd/backend/config/urls.py#L4) | Server request UUID, body cap, session/CSRF/auth middleware → /api/jobs/ view; response is no-store. |
-| Normalize input | [read_match_form](https://github.com/junrillg/resume-match-bedrock/blob/5b7c74a4a79513b43c94bc003d04e4bcbb1ec4cd/backend/matching/views.py#L92); [read_resume](https://github.com/junrillg/resume-match-bedrock/blob/5b7c74a4a79513b43c94bc003d04e4bcbb1ec4cd/backend/matching/services.py#L34); [read_requirements](https://github.com/junrillg/resume-match-bedrock/blob/5b7c74a4a79513b43c94bc003d04e4bcbb1ec4cd/backend/matching/services.py#L92) | Multipart text or bounded selectable PDF/TXT → normalized source and explicit unique skill/weight pairs. |
-| Admit once | [jobs](https://github.com/junrillg/resume-match-bedrock/blob/5b7c74a4a79513b43c94bc003d04e4bcbb1ec4cd/backend/matching/views.py#L142); [Job / OutboxEvent](https://github.com/junrillg/resume-match-bedrock/blob/5b7c74a4a79513b43c94bc003d04e4bcbb1ec4cd/backend/matching/models.py#L28) | Owner lock + key/fingerprint + quota → atomic job/outbox commit → 202 receipt. |
-| Relay UUID | [relay command](https://github.com/junrillg/resume-match-bedrock/blob/5b7c74a4a79513b43c94bc003d04e4bcbb1ec4cd/backend/matching/management/commands/relay_jobs.py#L16); [relay_once / publish_job](https://github.com/junrillg/resume-match-bedrock/blob/5b7c74a4a79513b43c94bc003d04e4bcbb1ec4cd/backend/matching/jobs.py#L142); [queue declaration](https://github.com/junrillg/resume-match-bedrock/blob/5b7c74a4a79513b43c94bc003d04e4bcbb1ec4cd/backend/config/celery.py#L11) | Unsent outbox → confirmed persistent message on resume.match → sent marker. |
-| Claim work | [process_job](https://github.com/junrillg/resume-match-bedrock/blob/5b7c74a4a79513b43c94bc003d04e4bcbb1ec4cd/backend/matching/tasks.py#L7); [run_job](https://github.com/junrillg/resume-match-bedrock/blob/5b7c74a4a79513b43c94bc003d04e4bcbb1ec4cd/backend/matching/jobs.py#L89); [claim_job](https://github.com/junrillg/resume-match-bedrock/blob/5b7c74a4a79513b43c94bc003d04e4bcbb1ec4cd/backend/matching/jobs.py#L45) | UUID → stored job; short row lock establishes running state, attempt and expiring lease token. |
-| Extract and verify | [extract_evidence](https://github.com/junrillg/resume-match-bedrock/blob/5b7c74a4a79513b43c94bc003d04e4bcbb1ec4cd/backend/matching/services.py#L138); [validate_evidence](https://github.com/junrillg/resume-match-bedrock/blob/5b7c74a4a79513b43c94bc003d04e4bcbb1ec4cd/backend/matching/services.py#L172) | Untrusted proposed quotes → checked source excerpts and literal skill mentions. |
-| Commit result | [finish_job](https://github.com/junrillg/resume-match-bedrock/blob/5b7c74a4a79513b43c94bc003d04e4bcbb1ec4cd/backend/matching/jobs.py#L65) | Current unexpired lease → weighted score, unique Match + succeeded Job + cleared source, in one transaction. |
-| Read durable state | [jobs GET](https://github.com/junrillg/resume-match-bedrock/blob/5b7c74a4a79513b43c94bc003d04e4bcbb1ec4cd/backend/matching/views.py#L145); [serialize_job](https://github.com/junrillg/resume-match-bedrock/blob/5b7c74a4a79513b43c94bc003d04e4bcbb1ec4cd/backend/matching/views.py#L132) | Owner-scoped collection query → statuses and nested completed matches; detail GET is also available. |
-| Render | [poll effect](https://github.com/junrillg/resume-match-bedrock/blob/5b7c74a4a79513b43c94bc003d04e4bcbb1ec4cd/frontend/src/App.tsx#L115); [selected result](https://github.com/junrillg/resume-match-bedrock/blob/5b7c74a4a79513b43c94bc003d04e4bcbb1ec4cd/frontend/src/App.tsx#L61); [MatchResult](https://github.com/junrillg/resume-match-bedrock/blob/5b7c74a4a79513b43c94bc003d04e4bcbb1ec4cd/frontend/src/App.tsx#L22) | GET collection → React job state → selected nested match → score and quotations. |
+| Initialize/authenticate | [App.load](https://github.com/junrillg/resume-match-bedrock/blob/4e9432e597d4d4d68cf8257110d4ca3f50cad0e4/frontend/src/App.tsx#L107); [login handler](https://github.com/junrillg/resume-match-bedrock/blob/4e9432e597d4d4d68cf8257110d4ca3f50cad0e4/frontend/src/App.tsx#L167); [session](https://github.com/junrillg/resume-match-bedrock/blob/4e9432e597d4d4d68cf8257110d4ca3f50cad0e4/backend/matching/views.py#L55); [login](https://github.com/junrillg/resume-match-bedrock/blob/4e9432e597d4d4d68cf8257110d4ca3f50cad0e4/backend/matching/views.py#L67) | GET session supplies CSRF and provider state; login establishes the session; jobs and existing reports reload. |
+| Capture and submit | [form events](https://github.com/junrillg/resume-match-bedrock/blob/4e9432e597d4d4d68cf8257110d4ca3f50cad0e4/frontend/src/App.tsx#L253); [analyze](https://github.com/junrillg/resume-match-bedrock/blob/4e9432e597d4d4d68cf8257110d4ca3f50cad0e4/frontend/src/App.tsx#L189) | State → selected text/file + weighted requirements; file bytes and extension participate in retry identity. |
+| Send HTTP | [api](https://github.com/junrillg/resume-match-bedrock/blob/4e9432e597d4d4d68cf8257110d4ca3f50cad0e4/frontend/src/api.ts#L35); [nginx /api/](https://github.com/junrillg/resume-match-bedrock/blob/4e9432e597d4d4d68cf8257110d4ca3f50cad0e4/frontend/nginx.conf#L40) | CSRF header, same-origin cookie and UUID key → proxy to api:8000; ten-second browser deadline. |
+| Identify and route | [middleware order](https://github.com/junrillg/resume-match-bedrock/blob/4e9432e597d4d4d68cf8257110d4ca3f50cad0e4/backend/config/settings.py#L15); [RequestMetadataMiddleware](https://github.com/junrillg/resume-match-bedrock/blob/4e9432e597d4d4d68cf8257110d4ca3f50cad0e4/backend/matching/middleware.py#L26); [URL patterns](https://github.com/junrillg/resume-match-bedrock/blob/4e9432e597d4d4d68cf8257110d4ca3f50cad0e4/backend/config/urls.py#L4) | Server request UUID, body cap, session/CSRF/auth middleware → /api/jobs/ view; response is no-store. |
+| Normalize input | [read_match_form](https://github.com/junrillg/resume-match-bedrock/blob/4e9432e597d4d4d68cf8257110d4ca3f50cad0e4/backend/matching/views.py#L103); [read_resume](https://github.com/junrillg/resume-match-bedrock/blob/4e9432e597d4d4d68cf8257110d4ca3f50cad0e4/backend/matching/services.py#L36); [read_requirements](https://github.com/junrillg/resume-match-bedrock/blob/4e9432e597d4d4d68cf8257110d4ca3f50cad0e4/backend/matching/services.py#L94) | Multipart text or bounded selectable PDF/TXT → normalized source and explicit unique skill/weight pairs. |
+| Admit once | [jobs](https://github.com/junrillg/resume-match-bedrock/blob/4e9432e597d4d4d68cf8257110d4ca3f50cad0e4/backend/matching/views.py#L153); [Job / OutboxEvent](https://github.com/junrillg/resume-match-bedrock/blob/4e9432e597d4d4d68cf8257110d4ca3f50cad0e4/backend/matching/models.py#L28) | Owner lock + key/fingerprint + quota → atomic job/outbox commit → 202 receipt. |
+| Relay UUID | [relay command](https://github.com/junrillg/resume-match-bedrock/blob/4e9432e597d4d4d68cf8257110d4ca3f50cad0e4/backend/matching/management/commands/relay_jobs.py#L16); [relay_once](https://github.com/junrillg/resume-match-bedrock/blob/4e9432e597d4d4d68cf8257110d4ca3f50cad0e4/backend/matching/jobs.py#L159); [publish_job](https://github.com/junrillg/resume-match-bedrock/blob/4e9432e597d4d4d68cf8257110d4ca3f50cad0e4/backend/matching/jobs.py#L147); [queue declaration](https://github.com/junrillg/resume-match-bedrock/blob/4e9432e597d4d4d68cf8257110d4ca3f50cad0e4/backend/config/celery.py#L11) | Unsent outbox → confirmed persistent message on resume.match.quorum → sent marker. |
+| Claim work | [process_job](https://github.com/junrillg/resume-match-bedrock/blob/4e9432e597d4d4d68cf8257110d4ca3f50cad0e4/backend/matching/tasks.py#L7); [run_job](https://github.com/junrillg/resume-match-bedrock/blob/4e9432e597d4d4d68cf8257110d4ca3f50cad0e4/backend/matching/jobs.py#L89); [claim_job](https://github.com/junrillg/resume-match-bedrock/blob/4e9432e597d4d4d68cf8257110d4ca3f50cad0e4/backend/matching/jobs.py#L45) | UUID → stored job; short row lock establishes running state, attempt and expiring lease token. |
+| Extract and verify | [extract_evidence](https://github.com/junrillg/resume-match-bedrock/blob/4e9432e597d4d4d68cf8257110d4ca3f50cad0e4/backend/matching/services.py#L163); [validate_evidence](https://github.com/junrillg/resume-match-bedrock/blob/4e9432e597d4d4d68cf8257110d4ca3f50cad0e4/backend/matching/services.py#L200); [HTTP contract](https://github.com/junrillg/resume-match-bedrock/blob/4e9432e597d4d4d68cf8257110d4ca3f50cad0e4/backend/local_converse.py#L43) | Untrusted proposed quotes → checked source excerpts and literal skill mentions. |
+| Commit result | [finish_job](https://github.com/junrillg/resume-match-bedrock/blob/4e9432e597d4d4d68cf8257110d4ca3f50cad0e4/backend/matching/jobs.py#L65) | Current unexpired lease → weighted score, unique Match + succeeded Job + cleared source, in one transaction. |
+| Read durable state | [jobs GET](https://github.com/junrillg/resume-match-bedrock/blob/4e9432e597d4d4d68cf8257110d4ca3f50cad0e4/backend/matching/views.py#L156); [serialize_job](https://github.com/junrillg/resume-match-bedrock/blob/4e9432e597d4d4d68cf8257110d4ca3f50cad0e4/backend/matching/views.py#L143) | Owner-scoped collection query → statuses and nested completed matches; detail GET is also available. |
+| Render | [poll effect](https://github.com/junrillg/resume-match-bedrock/blob/4e9432e597d4d4d68cf8257110d4ca3f50cad0e4/frontend/src/App.tsx#L125); [selected result](https://github.com/junrillg/resume-match-bedrock/blob/4e9432e597d4d4d68cf8257110d4ca3f50cad0e4/frontend/src/App.tsx#L72); [MatchResult](https://github.com/junrillg/resume-match-bedrock/blob/4e9432e597d4d4d68cf8257110d4ca3f50cad0e4/frontend/src/App.tsx#L32) | GET collection → React job state → selected nested match → score and quotations. |
 
 The initial `Idempotency-Key`, server `request_id`, and durable `job_id` have different
 roles: deduplicate admission, correlate the accepted request, and identify business work.
@@ -90,18 +93,21 @@ or removed on deletion. Evidence excerpts remain until result deletion. Clearing
 rows does not erase historical backups. See [ADR 0002](decisions/0002-evidence-and-data-boundaries.md).
 
 <details>
-<summary>Bedrock activation boundary — disabled locally</summary>
+<summary>Converse provider contract and AWS deployment boundary</summary>
 
-Compose uses the local literal extractor and mounts no AWS credentials. The Bedrock
-adapter is verified with mocked SDK responses; live account access and model behavior
-remain unverified. Application code owns evidence validation and the score.
+Compose selects `MATCH_PROVIDER=bedrock-local`, explicit `http://provider:8090` and
+`local-evidence-v1`. The boto3 client sends unsigned requests directly to the bounded
+local HTTP service. Placeholder client values are non-secret and prevent credential
+lookup; the endpoint allowlist prevents an accidental AWS fallback. Deterministic
+source extraction returns the expected Converse response shape.
 
-A later authorized integration needs an approved account, region, Converse model and
-spend limit, server-side worker credentials, matching API/worker provider configuration,
-and resource-scoped `bedrock:InvokeModel` permission. Review model support, cross-region
-inference and invocation logging first. Credentials never belong in browser code,
-Git or command arguments. Timeouts, attempts and tokens are bounded; provider failures
-never fall back to a demo score.
+`bedrock_request` sends source/requested skills plus allowlisted `requestMetadata` UUIDs.
+Worker `provider.requested` / `provider.responded` events bracket the operation. The
+local service alone emits `provider.completed`; no equivalent AWS service log is claimed.
+AWS uses a task role, the selected model and private runtime endpoint defined by
+[Terraform](../infra/terraform/README.md). Application code owns validation and scoring.
+Connection/read waits, SDK attempts and tokens are bounded; provider errors never
+fall back to a demo score. See [the AWS parity crosswalk](aws-service-journey.md#local-counterpart-and-limits).
 
 </details>
 
@@ -203,8 +209,8 @@ build checks; these complement the complete Compose runtime check.
 ## Correlated operational logs
 
 [`telemetry.py`](../backend/matching/telemetry.py) emits fixed, allowlisted events through
-bounded batched OTLP export to OpenObserve OSS. API admission, relay publication and
-worker completion share request/job IDs. Document text, quotes, prompts, usernames,
+bounded batched OTLP export to OpenObserve OSS. API admission, relay publication,
+worker/provider exchange and completion share request/job IDs. Document text, quotes, prompts, usernames,
 filenames, credentials and raw exceptions are excluded. Arbitrary root logs are not
 forwarded, and business paths never wait for a telemetry flush.
 
@@ -240,9 +246,11 @@ can differ, and best-effort export can omit events.
 | `job.succeeded` / `job.retry` / `job.failed` | Worker completion transaction, emitted on commit |
 | `job.recovered` | Relay recovery transaction, emitted on commit |
 | `job.interrupted` | Task wrapper, unexpected interruption |
+| `provider.requested` / `provider.responded` | Worker, before/after the provider call |
+| `provider.completed` | Local HTTP contract service, successful response only |
 
 Allowed attributes are UUID `request_id`/`job_id`, enum `stage`/`status`/`error_code`,
-integer `attempt` (0–3), `duration_ms` (0–600000), and `service_name` (api/relay/worker, otherwise unknown).
+integer `attempt` (0–3), `duration_ms` (0–600000), and `service_name` (api/relay/worker/provider, otherwise unknown).
 An event may omit attributes. The HTTP request summary is separate stdout metadata;
 arbitrary access/application logs are not forwarded to OpenObserve.
 
@@ -295,16 +303,22 @@ npm run build
 
 ## Verified local behavior
 
-The recorded verification covers 62 backend tests on Compose PostgreSQL, 15 frontend
-tests, the TypeScript/Vite production build and three startup-helper checks. Backend
-coverage includes input/scoring boundaries, owner isolation, CSRF, provider contracts,
+Current runtime verification covers 69 backend tests on Compose PostgreSQL, 19 frontend
+tests, the TypeScript/Vite production build, three startup-helper checks and three
+nginx proxy-configuration checks. Five additional bootstrap tests and an isolated
+PostgreSQL integration checked role creation, migrations, reviewer authentication and
+safe rerun. Backend coverage includes input/scoring boundaries, owner isolation, CSRF, provider contracts,
 concurrent idempotent admission, duplicate workers and deletion/completion fencing.
 
 <details>
 <summary>Runtime, recovery and observability evidence</summary>
 
-- All seven services passed health checks. The nginx/session smoke check covered CSRF
-  rejection, login, the synthetic 80% match, saved history and deletion.
+- All eight current services passed health checks. The real HTTP provider returned
+  the synthetic 80% result; a provider interruption exhausted three attempts safely.
+  A broker interruption preserved accepted queued work and recovered it. Seven safe
+  lifecycle events were queried across API, relay, worker and provider.
+- Earlier checks on the preceding runtime established the following unchanged boundaries.
+  The nginx/session smoke check covered CSRF rejection, login, saved history and deletion.
 - Real-broker checks covered queued work with the worker paused, HTTP 202 during broker
   outage, durable messages surviving broker restart and completion after worker restart.
   Completed jobs held one result and cleared temporary source text.
@@ -314,17 +328,15 @@ concurrent idempotent admission, duplicate workers and deletion/completion fenci
 - An isolated Compose project with fresh volumes started through `lab up`, processed its
   first 80% job and exported four searchable events. Only its temporary volumes were
   removed; the original stack and history were restored.
-- Prior Chrome checks confirmed the 80% sample on desktop and a mobile viewport.
-  The older report capture was retired during the terminology refresh; no replacement
-  browser capture is claimed. The [request illustration](assets/request-journey-analogy.png)
-  is conceptual artwork, not runtime evidence.
+- Current Chrome checks at 1440px desktop and 390px mobile found no horizontal
+  overflow and observed synthetic submission, queued → succeeded, and the 80% report.
 
 These are observations from local checks, not throughput benchmarks or production SLAs.
 
 </details>
 
 Live Bedrock access and model accuracy remain unverified. The single-node deployment
-does not establish capacity or high availability. The [broader deployment discussion](architecture.md#what-a-broader-deployment-would-add)
+does not establish capacity or high availability. The [AWS deployment discussion](architecture.md#aws-deployment-and-remaining-production-work)
 covers SSO/RBAC, organization isolation, TLS/network protections, retention and backups,
 abuse controls, alerts and model evaluation still needed for production.
 
@@ -342,3 +354,18 @@ before the remaining UI/logging implementation; it has not been backdated.
 | Researched design package | [f5bd64e](https://github.com/junrillg/resume-match-bedrock/commit/f5bd64ee55e4d49c743437e3ffd4346c0c5141b5) |
 | Job-aware React review | [44b0d1e](https://github.com/junrillg/resume-match-bedrock/commit/44b0d1e) |
 | Safe searchable observability and restart checks | [a79e75e](https://github.com/junrillg/resume-match-bedrock/commit/a79e75e702431878b684b5b2f7aa719a5eacab2c) |
+| AWS journey design before implementation | [7104a22](https://github.com/junrillg/resume-match-bedrock/commit/7104a22) |
+| Local HTTP Converse, cloud configuration and provider-aware UI | [4e9432e](https://github.com/junrillg/resume-match-bedrock/commit/4e9432e597d4d4d68cf8257110d4ca3f50cad0e4) |
+| AWS Terraform and cloud bootstrap | [e2bfaa2](https://github.com/junrillg/resume-match-bedrock/commit/e2bfaa2d3302e7ea54beda759ba44d22cd05f03f) |
+
+## AWS configuration verification
+
+Terraform format, initialization without a backend, schema validation and five
+plan-only mocked-provider tests passed. Tests check network, identity, task wiring,
+retention and staged deployment invariants without provisioning resources. Read-only
+container filesystems and writable nonroot `/tmp` volumes were exercised locally.
+The isolated bootstrap integration used a plaintext test network; it does not prove
+a real RDS or Amazon MQ TLS handshake. No AWS deployment/failover is claimed.
+
+See [the service/resource map](aws-service-journey.md#implementation-and-terraform)
+and [deployment reference](../infra/terraform/README.md).

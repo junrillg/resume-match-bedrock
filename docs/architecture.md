@@ -7,13 +7,13 @@ the saved state until it can show a score and the source quotes supporting it.
 We designed each handoff to preserve accepted work and prevent duplicate results.
 [The scenario and vocabulary](design.md) describe the requirements and terms.
 
-![Numbered local flow: React and Django admit a job and outbox in PostgreSQL; a relay publishes a UUID to RabbitMQ, a worker processes under a fenced lease, and React reads the result. Dotted telemetry goes to OpenObserve. Bedrock remains disabled.](assets/architecture.svg)
+![Numbered local flow: React and Django admit a job and outbox in PostgreSQL; a relay publishes a UUID to RabbitMQ, a worker processes under a fenced lease, and React reads the result. A separate local HTTP provider exchanges Converse requests with the worker; safe telemetry reaches OpenObserve.](assets/architecture.svg)
 
 The overview maps responsibilities: browser reads begin after acceptance and can
 overlap relay and worker processing.
 
-Solid numbered arrows carry business work. Dotted arrows carry diagnostic metadata
-or the explicitly disabled external-provider option. All local services start together
+Solid numbered arrows carry business work. Dashed arrows identify concurrent reads
+or diagnostic metadata. All local services start together
 with `./scripts/lab up`; database and broker ports remain private to Compose.
 
 ## One request in three phases
@@ -60,6 +60,7 @@ sequenceDiagram
   participant DB as PostgreSQL
   participant MQ as RabbitMQ
   participant Worker as Celery worker
+  participant Provider as HTTP Converse service
   Relay->>DB: 3.1 Lock an unsent outbox event
   Relay->>MQ: 3.2 Publish persistent job UUID
   MQ-->>Relay: Publisher confirmation
@@ -67,7 +68,9 @@ sequenceDiagram
   MQ->>Worker: 4.1 matching.process_job(job_id)
   Worker->>DB: 5.1 Lock job, claim timed lease
   DB-->>Worker: Stored text + requirements + lease
-  Note over Worker: 5.2 Extract evidence<br/>Validate source quotes
+  Worker->>Provider: 5.2 boto3 Converse: source + requested skills + UUID metadata
+  Provider-->>Worker: Deterministic proposed evidence
+  Note over Worker: Validate source quotes before completion
   Worker->>DB: 6.1 Fence lease, score, commit result
 ```
 
@@ -146,8 +149,11 @@ the API; evidence extraction is the worker responsibility. Queue messages contai
 the job UUID. Temporary source text stays in PostgreSQL until terminal state or deletion;
 evidence excerpts remain until report deletion. Backups may retain old rows.
 
-The default provider is a local literal extractor. The Bedrock adapter has mocked SDK
-tests; no AWS credentials are mounted and no calls are authorized. System instructions
+The default Compose provider is a separate HTTP Converse contract service. The worker
+uses boto3 against its explicit local endpoint, with unsigned requests and no credential
+discovery. It returns deterministic literal evidence; AWS uses the Bedrock runtime
+through the Terraform-defined private endpoint. Local contract and mocked SDK tests
+do not prove model quality or cloud connectivity. System instructions
 are separated from document data, but that alone is not an injection guarantee. Quotes
 must appear in the source and contain a bounded skill mention; negation, truth and
 positive experience still require human judgment.
@@ -159,7 +165,7 @@ stale responses. See [ADR 0002](decisions/0002-evidence-and-data-boundaries.md).
 
 ## Follow the operational path
 
-API, relay and worker export fixed lifecycle metadata to OpenObserve through bounded
+API, relay, worker and local HTTP provider export fixed lifecycle metadata to OpenObserve through bounded
 OpenTelemetry background batches. Correlate using the request/job IDs shown in the UI.
 See [ADR 0004](decisions/0004-searchable-observability.md), the [exact log search](implementation-guide.md#search-one-job-across-services)
 and [verification evidence](implementation-guide.md#verified-local-behavior). Lifecycle logs exclude document text, quotes, prompts, provider payloads,
@@ -179,24 +185,24 @@ Not every event has every field. These are logs, not a distributed trace or a me
 dashboard. Job IDs are useful search fields; they are unsuitable as one metric label
 per job. Best-effort diagnostics do not replace the persisted attempt/deadline ledger.
 
-![OpenObserve search returns eight safe lifecycle events for a synthetic success and controlled failure across API, relay and worker.](assets/log-search.png)
+![Earlier OpenObserve capture shows safe lifecycle events across API, relay and worker; current verification also includes the local HTTP provider.](assets/log-search.png)
 
-## What a broader deployment would add
+## AWS deployment and remaining production work
 
-![Proposed deployment only: protected ingress, organization identity, managed database and broker, isolated workers, approved Bedrock and central operations. None are provisioned here.](assets/enterprise-context.svg)
+![Terraform-defined AWS request path using official service icons: endpoint ingress, ECS tasks, RDS, Amazon MQ, private Bedrock access and report reads.](assets/enterprise-context.svg)
 
-This separate diagram is a design discussion. Production work includes SSO/RBAC and
-tenant policy; TLS/network protections; malware scanning; capacity and availability
-targets; backups and restore drills; retention/deletion across backups; alerts; provider
-spend limits; model/fairness evaluation and legal review for the intended use. No
-throughput, SLA or production readiness is certified.
+[The AWS service journey](aws-service-journey.md) follows each selected service and its
+local counterpart. [Terraform](../infra/terraform/README.md) defines networking, HTTPS,
+private application tasks, managed persistence/messaging, model access, identities,
+secrets, encryption and operations. It has not been deployed.
 
-Kafka is omitted because there are no independent replay consumers or retained stream
-requirements. Redis is omitted because no cache bottleneck or separate result backend
-is needed. More boxes would not strengthen this flow's stated guarantees.
+Production acceptance still needs account/region/model checks; restore/failover and
+capacity drills; organization identity/RBAC and tenant policy if required; malware
+scanning and retention across backups; alert ownership; and model/fairness evaluation
+for the intended use. No throughput, SLA or universal production readiness is certified.
 
-![Nonliteral analogy: documents pass through a sieve, then selected evidence is weighed.](assets/evidence-concept.png)
+Kafka has no independent replay consumer here. Redis has no demonstrated caching role;
+the database already owns status/results. More services would not strengthen those guarantees.
 
-The illustration explains validation before scoring; it is not infrastructure. Continue
-with [the implementation reference](implementation-guide.md), [ADRs](decisions/0001-durable-background-work.md)
-and [research](research.md).
+Continue with [the implementation reference](implementation-guide.md),
+[ADRs](decisions/0001-durable-background-work.md) and [research](research.md).

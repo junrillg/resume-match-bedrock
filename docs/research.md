@@ -29,6 +29,18 @@ Additional pinned-version operational contracts:
 - [OpenObserve v1.1.1 configuration](https://github.com/openobserve/openobserve/blob/v1.1.1/src/config/src/config.rs): three-day retention is the minimum positive setting; its scheduled deletion is not immediate. The free-disk circuit breaker is not a volume byte quota. Memory and cache limits are explicit in Compose.
 - [nginx upstream resolve](https://nginx.org/en/docs/http/ngx_http_upstream_module.html#resolve): dynamic upstream resolution is available in the pinned OSS version. A shared zone and Docker DNS resolver let the existing web container follow a recreated API's changed address; this was exercised locally.
 
+## AWS deployment contracts
+
+The [AWS decision](decisions/0005-aws-service-journey.md) was recorded before runtime
+and Terraform implementation. These primary sources support the selected service wiring:
+
+- [Fargate networking](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/fargate-task-networking.html) and [ECR private endpoints](https://docs.aws.amazon.com/AmazonECR/latest/userguide/vpc-endpoints.html): shared-task localhost; private image pulls also need the S3 layer route.
+- [Amazon MQ cluster deployment](https://docs.aws.amazon.com/amazon-mq/latest/developer-guide/rabbitmq-broker-architecture.html), [4.3 behavior](https://docs.aws.amazon.com/amazon-mq/latest/developer-guide/rabbitmq-43.html) and [data protection](https://docs.aws.amazon.com/amazon-mq/latest/developer-guide/data-protection.html): three-zone RabbitMQ, quorum queues and supported encryption; aggregate broker alarms rather than removed queue dimensions.
+- [RDS PostgreSQL TLS](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/PostgreSQL.Concepts.General.SSL.html) and [ECS secret injection](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/secrets-envvar-secrets-manager.html): verified database transport and task-start secret configuration.
+- [Bedrock interface endpoints](https://docs.aws.amazon.com/bedrock/latest/userguide/vpc-interface-endpoints.html): private worker-to-runtime connectivity alongside IAM authorization.
+- [Terraform validation](https://developer.hashicorp.com/terraform/cli/commands/validate) and [provider mocking](https://developer.hashicorp.com/terraform/language/tests/mocking): credential-free schema and plan assertions, separate from deployment evidence.
+- [LocalStack authentication](https://docs.localstack.cloud/aws/getting-started/auth-token/): a separate deterministic HTTP contract service avoids a licensed/authenticated emulator prerequisite.
+
 ## Alternatives considered
 
 A synchronous request is simpler, but ties model latency/retry to an HTTP worker.

@@ -27,29 +27,25 @@ limits, not measured industry capacity targets. The account quota is 20 logical 
 per UTC day. Work has a finite deadline and attempt budget. The caller owns its jobs
 and reports. This is user isolation, not a complete organization/tenant authorization model.
 
-The local provider supplies deterministic evidence. The next delivery adds a separate
-HTTP Converse contract service and an AWS Terraform deployment, preserving the same
-business boundaries. Local execution and AWS deployment evidence are reported separately.
+The separate local HTTP Converse contract service supplies deterministic evidence.
+The AWS Terraform deployment preserves the same business boundaries with managed
+ingress, private compute/data/messaging and Bedrock access. Local execution and AWS deployment evidence are reported separately.
 No automatic hiring decision is made.
 
 ## Intended flow
 
-1. React sends a CSRF-protected submission with an idempotency key through nginx to Django.
-2. Django authenticates, validates bounded input and normalizes selectable document text.
-3. One PostgreSQL transaction records the job and an outbox entry. HTTP `202` means
-   accepted, not completed. A repeated key/body returns the same logical job.
-4. The relay publishes only the job ID to a declared durable RabbitMQ queue and records
-   broker confirmation. The résumé text stays in the database, never in the queue message.
-5. A separate Celery worker claims the job under a short row lock, then calls the
-   extraction provider outside that transaction. A lease token fences result writes.
-6. Application code validates quoted evidence against the original source and computes
-   the weighted coverage score. Result and terminal job state commit together.
-7. React polls the owner-scoped job endpoint; the result appears when processing finishes.
-8. Safe structured lifecycle events let the reviewer find the request/job in OpenObserve.
+1. **Submit:** React sends the selected document, requirements and retry key through nginx.
+2. **Accept:** Django validates the session/input; PostgreSQL commits job and outbox together before the receipt.
+3. **Relay:** read committed intent, publish only the job UUID and mark sent after broker confirmation.
+4. **Queue:** RabbitMQ retains the persistent wakeup on the declared quorum queue.
+5. **Process:** a leased worker calls the HTTP evidence provider outside the claim transaction, then validates its proposals.
+6. **Save:** check the current lease, compute weighted coverage, commit one report and clear temporary source.
+7. **Read:** React polls owner-scoped status and renders the report or a safe error.
 
-The observability path is verified with real success/failure ingestion, viewer-outage
-processing and an isolated fresh-stack run. The shipped flow and evidence are maintained
-in [architecture.md](architecture.md).
+Safe structured events connect the processes in OpenObserve. Reads overlap background
+work; delivery and extraction calls can repeat. The [architecture](architecture.md)
+shows execution, recovery and evidence; the [AWS journey](aws-service-journey.md) maps
+the same responsibilities to the selected managed services.
 
 ## Where failure changes the flow
 
@@ -72,7 +68,7 @@ own operational design. See the [data and AI decision](decisions/0002-evidence-a
 | Django API | Authorized, validated, idempotent work admission | [Background work](decisions/0001-durable-background-work.md) |
 | PostgreSQL | Source of truth for jobs, outbox and results | [Background work](decisions/0001-durable-background-work.md) |
 | Relay + RabbitMQ + worker | Reliable delivery and independent processing | [Background work](decisions/0001-durable-background-work.md) |
-| Bedrock adapter / local substitute | Propose evidence; never own the score | [Evidence boundary](decisions/0002-evidence-and-data-boundaries.md) |
+| HTTP Converse service / Bedrock adapter | Propose evidence; never own the score | [Evidence boundary](decisions/0002-evidence-and-data-boundaries.md) |
 | OpenObserve + OTLP exporter | Search safe lifecycle events across processes | [Observability](decisions/0004-searchable-observability.md) |
 
 ## Ordered build and verification plan

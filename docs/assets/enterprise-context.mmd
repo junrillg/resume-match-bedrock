@@ -1,13 +1,15 @@
-%% Logical flow companion. enterprise-context.svg is the editable publication source.
-%% Its Bedrock graphic embeds aws/Arch_Amazon-Bedrock_64.svg; see aws/NOTICE.md.
+%% Logical companion; enterprise-context.svg embeds official vectors in the published layout.
+%% Icon provenance and original bytes: aws/NOTICE.md.
 flowchart TB
-  accTitle: Production context, proposed and not deployed
-  accDescr: All deployment components below remain proposed and unverified. Generic database, broker and identity components do not designate AWS services.
-  subgraph Proposed["Proposed enterprise deployment · NOT provisioned or verified"]
-    U["Reviewer → protected ingress<br/>TLS, rate controls, organization identity / SSO"] --> A["API + tenant authorization<br/>Bounded document admission"]
-    A --> D[("Managed PostgreSQL<br/>Jobs + outbox + results; backups + restore drills")]
-    D --> R["Outbox relay → durable broker<br/>Acknowledgments; HA + capacity plan"] --> W["Isolated workers<br/>Resource limits; lease, retry, validation"]
-    W -->|"Fenced result commit"| D
-    W --> B["<img src='aws/Arch_Amazon-Bedrock_64.svg' width='48' height='48'/><br/>Amazon Bedrock<br/>IAM, spend, data policy and model evaluation"]
-    W -. "API / relay / worker safe metadata" .-> O["Central observability<br/>Access, alerts, retention and operational ownership"]
-  end
+  accTitle: AWS endpoint to evidence report
+  accDescr: Terraform-defined AWS deployment, not deployed. DNS is lookup; polling overlaps processing. Supporting services are a separate view.
+  DNS["<img src='aws/Arch_Amazon-Route-53_64.svg' width='48' height='48'/><br/>1 Route 53 · resolve endpoint"] -. "ALB address" .-> ALB["<img src='aws/Res_Elastic-Load-Balancing_Application-Load-Balancer_48.svg' width='48' height='48'/><br/>1 ALB · HTTPS using ACM certificate"]
+  ALB --> APP["<img src='aws/Arch_Amazon-Elastic-Container-Service_64.svg' width='48' height='48'/><img src='aws/Arch_AWS-Fargate_64.svg' width='48' height='48'/><br/>1–2 ECS/Fargate app<br/>nginx → localhost Django"]
+  APP --> DB["<img src='aws/Arch_Amazon-RDS_64.svg' width='48' height='48'/><br/>2 RDS PostgreSQL<br/>Job + Outbox transaction"]
+  DB --> R["<img src='aws/Arch_AWS-Fargate_64.svg' width='48' height='48'/><br/>3 Fargate relay"] --> MQ["<img src='aws/Arch_Amazon-MQ_64.svg' width='48' height='48'/><br/>4 Amazon MQ · RabbitMQ quorum"]
+  MQ --> W["<img src='aws/Arch_AWS-Fargate_64.svg' width='48' height='48'/><br/>5 Worker · claim lease"]
+  W -->|"Private Converse"| B["<img src='aws/Arch_Amazon-Bedrock_64.svg' width='48' height='48'/><br/>5 Bedrock · propose evidence"]
+  B -->|"Evidence response"| W
+  W -->|"6 Validate, fence, score + save"| DB
+  U["7 React read + render"] -. "HTTPS entry → owner query" .-> APP
+  DB -. "Status/report via app + ALB" .-> U

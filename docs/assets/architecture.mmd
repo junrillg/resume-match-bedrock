@@ -1,19 +1,12 @@
-%% Logical flow companion. architecture.svg is the editable, self-contained publication source.
-%% Its Bedrock graphic embeds aws/Arch_Amazon-Bedrock_64.svg; see aws/NOTICE.md.
+%% Logical companion; architecture.svg is the self-contained publication layout.
 flowchart TB
-  accTitle: One comparison, seven steps
-  accDescr: PostgreSQL is the source of truth. Confirmed broker delivery can repeat; worker effects are guarded. Bedrock is disabled, while safe lifecycle metadata reaches OpenObserve.
-  subgraph Admission["Admit · Docker Compose"]
-    direction LR
-    UI["1 Submit · React + nginx<br/>Session, CSRF, idempotency key"] --> API["2 Accept · Django + PostgreSQL<br/>Bounded input; atomic Job + Outbox"]
-    API --> Relay["3 Relay<br/>Read committed outbox; await publisher confirm"]
-  end
-  subgraph Processing["Deliver and process · Docker Compose"]
-    direction RL
-    Q["4 Queue · RabbitMQ<br/>Persistent UUID; redelivery"] --> W["5 Process · Celery worker<br/>Lease; extract → validate evidence"]
-    W --> Result["6 Save · same PostgreSQL<br/>Fenced score + unique result"]
-  end
-  Relay --> Q
-  Result --> Read["7 Read · React polls Django GET<br/>Owner-scoped status + report"]
-  W -. "API + relay + worker: safe metadata only" .-> O["OpenObserve OSS<br/>Batched OTLP lifecycle logs"]
-  W -. "Explicit configuration only" .-> B["<img src='aws/Arch_Amazon-Bedrock_64.svg' width='48' height='48'/><br/>Amazon Bedrock Converse<br/>Disabled · no live AWS verification"]
+  accTitle: Local comparison in seven business steps
+  accDescr: Real HTTP provider, PostgreSQL and RabbitMQ run under Compose. Reads overlap background processing. Safe process logs reach OpenObserve.
+  UI["1 Submit · React + nginx"] --> API["2 Accept · Django<br/>Atomic PostgreSQL Job + Outbox"]
+  API --> R["3 Relay · publish UUID; await confirmation"] --> Q["4 Queue · RabbitMQ quorum"] --> W["5 Process · leased Celery worker"]
+  W -->|"5.1 boto3 Converse"| P["Local HTTP contract provider:8090<br/>Deterministic evidence"]
+  P -->|"Proposed quotes"| W
+  W -->|"Validate; current lease"| D["6 Save · same PostgreSQL<br/>Score + one report + terminal state"]
+  Read["7 Read · React polls /api/jobs/"] -. "Concurrent after receipt" .-> API
+  API -. "Status + optional saved report" .-> Read
+  W -. "API / relay / worker / provider metadata" .-> O["OpenObserve OSS"]

@@ -5,7 +5,7 @@
 A reviewer needs the same submission, durable handoff and visible report across local
 and AWS deployments. The AWS architecture must account for ingress, compute, data,
 messaging, model access, identity and operations. A direct browser-to-model diagram
-would omit those responsibilities. This decision records the next implementation;
+would omit those responsibilities. This decision defines the deployment;
 the deployment is not an observed AWS environment.
 
 ## Decision
