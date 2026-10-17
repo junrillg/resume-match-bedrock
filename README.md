@@ -19,7 +19,8 @@ builds the images, waits for PostgreSQL and RabbitMQ health, runs migrations, an
 Gunicorn behind nginx serving the React production build. It creates the synthetic `lab`
 account once. Use `./scripts/lab credentials` in your own terminal to view its password.
 Only port 8088 is exposed, on loopback; PostgreSQL and RabbitMQ stay on the Compose network.
-AWS remains disabled. RabbitMQ is ready for the next milestone; matching is still synchronous.
+AWS remains disabled. A separate Celery worker processes the asynchronous jobs API;
+the current UI still uses the synchronous compatibility endpoint until its next milestone.
 
 `./scripts/lab down` stops containers while retaining database and broker volumes. Your
 existing development SQLite database is separate and untouched. Keep `.env` with the named
@@ -65,6 +66,29 @@ hiring recommendation. It does not infer skill aliases or validate competence,
 experience duration, negation, or document truth. Review every quote. PDF OCR and DOCX
 are outside this slice. Use synthetic data: saved evidence may contain personal data.
 
+## Asynchronous jobs API
+
+Authenticated `POST /api/jobs/` accepts the same résumé/requirements multipart form plus a
+UUID `Idempotency-Key` header, and returns HTTP 202 with a job ID and status. Repeating the
+same key and normalized payload returns that job without another quota charge; changing
+the payload under that key returns 409. `GET /api/jobs/` lists your latest 100 jobs;
+`GET /api/jobs/<id>/` returns queued/running/succeeded/failed state, attempts, safe error code
+and a completed match when available. `DELETE /api/jobs/<id>/` removes the job and result.
+Session cookies and CSRF apply to these endpoints too.
+
+Job admission and an outbox event commit together in PostgreSQL. The relay sends only a job
+UUID through an explicitly declared durable RabbitMQ queue, confirms persistent delivery,
+then marks the event sent. The worker claims a fenced 90-second lease, computes outside
+the database transaction and commits one result. Duplicate deliveries are safe. Transient
+provider failures receive at most three claims with finite backoff; the relay recovers
+expired leases and stale queued wakeups, with a ten-minute total deadline. No result backend,
+Redis, Beat, or Celery retry state is required.
+
+Privacy changes for asynchronous jobs: extracted résumé text is temporarily stored in the
+database while queued/running, and cleared on success/failure or removed on deletion.
+Evidence excerpts remain in the result until deletion. Clearing live rows does not erase
+historical database backups; use synthetic data in this lab.
+
 ## Verify
 
 ```sh
@@ -82,10 +106,14 @@ npm test
 npm run build
 ```
 
-Verified locally: 27 backend tests pass on SQLite and Compose PostgreSQL; the existing
+Verified locally: 51 backend tests pass on Compose PostgreSQL, including concurrent
+idempotent admission, duplicate workers and deletion/completion fencing. The existing
 6 frontend tests pass and TypeScript/Vite build passes inside the production image.
 The Compose smoke check covers nginx, session cookies, CSRF rejection, login, an 80% match,
-saved history and deletion. PostgreSQL, RabbitMQ, API and web health checks pass.
+saved history and deletion. PostgreSQL, RabbitMQ, API, relay, worker and web health checks pass.
+Real-broker experiments confirm queued work while the worker is paused, HTTP 202 during
+a broker outage, durable messages surviving a broker restart, and completion after a worker
+restart. Completed jobs produced one result and cleared their temporary source text.
 The fictional UI sample scores 80%, confirmed through Chrome on desktop and a mobile
 viewport. [See the evidence report screenshot](docs/assets/workbench.png).
 
@@ -120,6 +148,8 @@ inference and invocation logging must be reviewed in your own account before rea
 | `backend/matching/services.py` | File parsing, extraction prompt, Bedrock boundary, evidence validation and score formula |
 | `backend/matching/views.py` | Session API, validation, quotas and owner-scoped result access |
 | `backend/matching/models.py` | Results and request counters |
+| `backend/matching/jobs.py` | Fenced worker claims, finite retries, outbox relay and recovery |
+| `backend/matching/test_jobs.py` | Durable job state and PostgreSQL concurrency tests |
 | `backend/matching/tests.py` | Backend behavior and provider contract tests |
 | `frontend/src/` | React forms, authenticated requests, score evidence and history |
 | `docs/assets/architecture.mmd` | Editable implementation diagram |

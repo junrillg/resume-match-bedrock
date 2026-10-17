@@ -5,7 +5,8 @@ from decimal import Decimal, ROUND_HALF_UP
 
 import boto3
 from botocore.config import Config
-from botocore.exceptions import BotoCoreError, ClientError
+from botocore.exceptions import (BotoCoreError, ClientError, ConnectionClosedError,
+                                ConnectTimeoutError, EndpointConnectionError, ReadTimeoutError)
 from django.conf import settings
 from pypdf import PdfReader, apply_configuration
 
@@ -19,7 +20,15 @@ class InvalidInput(ValueError):
 
 
 class ProviderError(Exception):
-    pass
+    code = "invalid_evidence"
+
+
+class TransientProviderError(ProviderError):
+    code = "provider_unavailable"
+
+
+class ProviderRejectedError(ProviderError):
+    code = "provider_rejected"
 
 
 def read_resume(text, upload):
@@ -126,8 +135,8 @@ def bedrock_request(text, requirements):
     }
 
 
-def extract_evidence(text, requirements):
-    if settings.MATCH_PROVIDER == "demo":
+def extract_evidence(text, requirements, provider=None):
+    if (provider or settings.MATCH_PROVIDER) == "demo":
         extracted = []
         for requirement in requirements:
             skill = requirement["skill"]
@@ -147,7 +156,15 @@ def extract_evidence(text, requirements):
             if len(blocks) != 1 or set(blocks[0]) != {"text"} or len(blocks[0]["text"]) > 24_000:
                 raise ProviderError()
             extracted = json.loads(blocks[0]["text"])
-        except (BotoCoreError, ClientError, ValueError, KeyError, TypeError):
+        except (ConnectionClosedError, ConnectTimeoutError, EndpointConnectionError, ReadTimeoutError):
+            raise TransientProviderError() from None
+        except ClientError as exc:
+            if exc.response.get("Error", {}).get("Code") in {"ThrottlingException", "ModelTimeoutException", "ServiceUnavailableException", "InternalServerException", "ModelNotReadyException"}:
+                raise TransientProviderError() from None
+            raise ProviderRejectedError() from None
+        except BotoCoreError:
+            raise ProviderRejectedError() from None
+        except (ValueError, KeyError, TypeError):
             raise ProviderError() from None
     return validate_evidence(text, requirements, extracted)
 

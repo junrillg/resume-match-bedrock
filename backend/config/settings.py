@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from urllib.parse import quote
 
 from django.core.exceptions import ImproperlyConfigured
 
@@ -68,4 +69,35 @@ if MATCH_PROVIDER not in {"demo", "bedrock"}:
 if MATCH_PROVIDER == "bedrock" and not (BEDROCK_REGION and BEDROCK_MODEL_ID):
     raise ImproperlyConfigured("Bedrock requires AWS_REGION and BEDROCK_MODEL_ID.")
 MATCH_DAILY_LIMIT = 20
+JOB_MAX_ATTEMPTS = 3
+JOB_DEADLINE_SECONDS = 600
+JOB_LEASE_SECONDS = 90
+JOB_WAKE_SECONDS = 30
+JOB_RETRY_SECONDS = 2
+CELERY_BROKER_URL = "amqp://{}:{}@{}:5672//".format(
+    quote(os.getenv("RABBITMQ_USER", "lab"), safe=""),
+    quote(os.getenv("RABBITMQ_PASSWORD", ""), safe=""),
+    os.getenv("RABBITMQ_HOST", "127.0.0.1"),
+)
+CELERY_BROKER_CONNECTION_TIMEOUT = 3
+CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
+CELERY_BROKER_HEARTBEAT = 10
+CELERY_BROKER_TRANSPORT_OPTIONS = {"confirm_publish": True, "read_timeout": 3, "write_timeout": 3}
+CELERY_TASK_SERIALIZER = "json"
+CELERY_ACCEPT_CONTENT = ["json"]
+CELERY_TASK_IGNORE_RESULT = True
+CELERY_TASK_STORE_ERRORS_EVEN_IF_IGNORED = False
+CELERY_TASK_ACKS_LATE = True
+CELERY_TASK_REJECT_ON_WORKER_LOST = True
+CELERY_WORKER_PREFETCH_MULTIPLIER = 1
+CELERY_WORKER_ENABLE_REMOTE_CONTROL = False
+CELERY_WORKER_CANCEL_LONG_RUNNING_TASKS_ON_CONNECTION_LOSS = True
+CELERY_TASK_SOFT_TIME_LIMIT = 50
+CELERY_TASK_TIME_LIMIT = 60
+CELERY_TASK_CREATE_MISSING_QUEUES = False
+CELERY_TASK_DEFAULT_QUEUE = "resume.match"
+CELERY_TASK_DEFAULT_EXCHANGE = "resume.match"
+CELERY_TASK_DEFAULT_ROUTING_KEY = "resume.match"
+CELERY_TASK_DEFAULT_DELIVERY_MODE = "persistent"
+CELERY_TASK_PUBLISH_RETRY = False
 LOGGING = {"version": 1, "disable_existing_loggers": False, "handlers": {"console": {"class": "logging.StreamHandler"}}, "loggers": {"matching.audit": {"handlers": ["console"], "level": "INFO", "propagate": False}}}

@@ -16,6 +16,9 @@ x-backend: &backend
     POSTGRES_USER: ${POSTGRES_USER:?Run ./scripts/lab up first}
     POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Run ./scripts/lab up first}
     LAB_DEMO_PASSWORD: ${LAB_DEMO_PASSWORD:?Run ./scripts/lab up first}
+    RABBITMQ_HOST: broker
+    RABBITMQ_USER: lab
+    RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?Run ./scripts/lab up first}
   init: true
   read_only: true
   tmpfs:
@@ -72,6 +75,36 @@ services:
       test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/session/', timeout=3)"]
       interval: 5s
       timeout: 4s
+      retries: 12
+    restart: unless-stopped
+
+  worker:
+    <<: *backend
+    command: [celery, -A, config, worker, --loglevel=WARNING, --concurrency=1, --hostname=worker@lab, --without-gossip, --without-mingle]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      broker:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, python, -c, "import os,pathlib; os.kill(int(pathlib.Path('/tmp/resume-match-worker-ready').read_text()),0)"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
+  relay:
+    <<: *backend
+    command: [python, manage.py, relay_jobs]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      broker:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, python, -c, "import pathlib,time; assert time.time()-pathlib.Path('/tmp/resume-match-relay-heartbeat').stat().st_mtime<15"]
+      interval: 5s
+      timeout: 3s
       retries: 12
     restart: unless-stopped
 

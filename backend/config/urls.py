@@ -7,6 +7,8 @@ urlpatterns = [
     path("api/logout/", views.logout),
     path("api/matches/", views.matches),
     path("api/matches/<uuid:match_id>/", views.match_detail),
+    path("api/jobs/", views.jobs),
+    path("api/jobs/<uuid:job_id>/", views.job_detail),
 ]
 handler404 = "matching.views.not_found"
 handler500 = "matching.views.server_error"
