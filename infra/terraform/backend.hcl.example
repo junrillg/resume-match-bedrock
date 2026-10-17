@@ -1,0 +1,7 @@
+# Existing account-owned encrypted, versioned, private bucket; never commit real config.
+bucket       = "replace-with-protected-state-bucket"
+key          = "resume-match/terraform.tfstate"
+region       = "us-east-1"
+encrypt      = true
+use_lockfile = true
+# kms_key_id = "arn:aws:kms:<region>:<account>:key/<state-key>"

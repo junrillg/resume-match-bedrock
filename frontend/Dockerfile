@@ -9,6 +9,7 @@ FROM nginx:1.30.6-alpine3.24
 COPY frontend/nginx.conf /etc/nginx/nginx.conf.template
 COPY --chmod=755 frontend/start-web /usr/local/bin/start-web
 COPY --from=build /app/dist /usr/share/nginx/html
+VOLUME ["/tmp"]
 USER 101:101
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/start-web"]

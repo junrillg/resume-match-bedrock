@@ -1,0 +1,16 @@
+# Synthetic example only: confirm your account, DNS zone, AZs, model access and versions.
+account_id              = "111122223333"
+region                  = "us-east-1"
+availability_zones      = ["us-east-1a", "us-east-1b", "us-east-1c"]
+public_zone_id          = "Z0123456789EXAMPLE"
+hostname                = "resume.example.com"
+postgres_engine_version = "17.11"
+bedrock_model_id         = "example.model-v1:0"
+bedrock_resource_arns    = ["arn:aws:bedrock:us-east-1::foundation-model/example.model-v1:0"]
+
+# Phase 1: foundation only. No placeholder task definition or image is deployed.
+image_digests       = null
+bootstrap_completed = false
+enable_services     = false
+# Phase 2: set image_digests = { api = "sha256:<actual digest>", web = "sha256:<actual digest>" }
+# Phase 3: run the one-off bootstrap task; then set both booleans true after exit code 0.

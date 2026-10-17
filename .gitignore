@@ -14,3 +14,13 @@ profile.json
 tracker.json
 architecture-labs/
 *.log
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.tfvars
+*.tfvars.json
+backend.hcl
+bootstrap-network.json
+crash.log
+crash.*.log
