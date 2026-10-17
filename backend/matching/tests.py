@@ -162,7 +162,7 @@ class BedrockTests(SimpleTestCase):
                 extract_evidence("Python", self.requirements)
 
 
-@override_settings(MATCH_PROVIDER="demo")
+@override_settings(MATCH_PROVIDER="demo", OTEL_LOGS_ENDPOINT="")
 class APITests(TestCase):
     @classmethod
     def setUpTestData(cls):

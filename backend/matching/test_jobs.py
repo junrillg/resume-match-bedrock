@@ -34,7 +34,7 @@ def make_job(owner, **changes):
     return job
 
 
-@override_settings(MATCH_PROVIDER="demo")
+@override_settings(MATCH_PROVIDER="demo", OTEL_LOGS_ENDPOINT="")
 class JobAPITests(TestCase):
     def setUp(self):
         self.owner = get_user_model().objects.create_user("async-alice")
@@ -125,7 +125,7 @@ class JobAPITests(TestCase):
         self.assertEqual((Job.objects.count(), OutboxEvent.objects.count(), Match.objects.count()), (0, 0, 0))
 
 
-@override_settings(MATCH_PROVIDER="demo")
+@override_settings(MATCH_PROVIDER="demo", OTEL_LOGS_ENDPOINT="")
 class JobStateTests(TestCase):
     def setUp(self):
         self.owner = get_user_model().objects.create_user("state-owner")
@@ -273,7 +273,7 @@ class JobStateTests(TestCase):
         self.assertNotIn("PRIVATE-SOURCE", "\n".join(captured.output))
 
 
-@override_settings(MATCH_PROVIDER="demo")
+@override_settings(MATCH_PROVIDER="demo", OTEL_LOGS_ENDPOINT="")
 class PostgreSQLConcurrencyTests(TransactionTestCase):
     def setUp(self):
         self.owner = get_user_model().objects.create_user("concurrent-owner")

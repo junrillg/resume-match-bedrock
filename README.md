@@ -11,8 +11,8 @@ validates the quotes and calculates the score. The default demo stays entirely l
 Start with [the scenario and numbered flow](docs/design.md), follow [the architectural
 decisions](docs/decisions/0001-durable-background-work.md), then use [the ordered rebuild
 guide](docs/implementation-guide.md). [Research and current contracts](docs/research.md)
-explain the sources behind those choices. UI job progress and log search are planned
-next; the durable jobs API is already verified.
+explain the sources behind those choices. The UI tracks durable job progress, and the
+local log viewer traces one request across API, relay and worker.
 
 ## Run locally
 
@@ -26,16 +26,51 @@ Open <http://127.0.0.1:8088>. The script generates private, ignored `.env` crede
 builds the images, waits for PostgreSQL and RabbitMQ health, runs migrations, and starts
 Gunicorn behind nginx serving the React production build. It creates the synthetic `lab`
 account once. Use `./scripts/lab credentials` in your own terminal to view its password.
-Only port 8088 is exposed, on loopback; PostgreSQL and RabbitMQ stay on the Compose network.
+The app uses loopback port 8088 and the log viewer uses loopback port 5080;
+PostgreSQL and RabbitMQ stay on the Compose network.
 AWS remains disabled. The UI submits durable jobs for a separate Celery worker to process,
 then polls their state. New comparisons are accepted only through the jobs API;
 the matches API retains read/delete access to existing reports.
 
-`./scripts/lab down` stops containers while retaining database and broker volumes. Your
+`./scripts/lab down` stops containers while retaining database, broker and log volumes. Your
 existing development SQLite database is separate and untouched. Keep `.env` with the named
 volumes: regenerating its passwords does not change passwords already initialized in them.
 Use `./scripts/lab help` for commands. The stack is a local HTTP learning environment with
 synthetic data and Django debug enabled, not an internet deployment.
+
+## Search one job across services
+
+Open <http://127.0.0.1:5080>, sign in with the log-viewer login shown by
+`./scripts/lab credentials` in your private terminal, and select the `resume_match` log
+stream in the `default` organization. Copy the request ID from a comparison and search:
+
+```sql
+SELECT * FROM "resume_match"
+WHERE request_id = 'PASTE_REQUEST_UUID'
+ORDER BY _timestamp ASC
+```
+
+API admission, relay confirmation, worker progress, retries, failures and recovery emit
+fixed event names plus validated IDs and enum/numeric metadata. Document text, titles,
+evidence, usernames, filenames, credentials and raw exceptions are excluded. The dedicated
+OpenTelemetry exporter never captures root/application exception logs.
+Completion events include elapsed time; failures add an error code.
+
+Export uses a 256-record queue, batches of 32, a one-second schedule and a 0.5-second HTTP
+timeout. It never flushes or waits in the business path. Events can be lost when the queue
+fills, the viewer is unavailable or a process exits; this is not a durable audit ledger.
+Viewer failure does not prevent jobs from completing.
+
+OpenObserve OSS v1.1.1 is pinned by digest, with a static HTTP health probe added to its
+distroless image. It runs nonroot with a 1 GiB container limit, 64/16 MiB memtable/in-memory
+file limits, a 256 MiB query pool and caches disabled. Three-day retention is checked hourly
+with a 120-minute file-delete delay; a 1024 MiB free-space circuit breaker protects disk.
+These settings do not impose a hard byte quota on its named volume. `lab up` adds a missing
+viewer password atomically while preserving existing secrets and owner-only `.env` permissions.
+
+nginx uses Docker DNS to refresh the API address after container recreation, avoiding stale
+upstream 502 responses. This uses the [OSS upstream resolver](https://nginx.org/en/docs/http/ngx_http_upstream_module.html)
+available in the pinned nginx version. See [ADR 0004](docs/decisions/0004-searchable-observability.md).
 
 ## What you can review
 
@@ -90,14 +125,19 @@ npm test
 npm run build
 ```
 
-Verified locally: 53 backend tests pass on Compose PostgreSQL, including concurrent
+Verified locally: 62 backend tests pass on Compose PostgreSQL, including concurrent
 idempotent admission, duplicate workers and deletion/completion fencing. The existing
-6 frontend tests pass and TypeScript/Vite build passes inside the production image.
+15 frontend tests pass and TypeScript/Vite build passes inside the production image.
 The Compose smoke check covers nginx, session cookies, CSRF rejection, login, an 80% match,
-saved history and deletion. PostgreSQL, RabbitMQ, API, relay, worker and web health checks pass.
+saved history and deletion. All seven service health checks pass, including OpenObserve.
 Real-broker experiments confirm queued work while the worker is paused, HTTP 202 during
 a broker outage, durable messages surviving a broker restart, and completion after a worker
 restart. Completed jobs produced one result and cleared their temporary source text.
+Search returned eight complete lifecycle records across the three application services;
+full records contained no document or credential fields. With the viewer stopped, a job
+was accepted in 0.057 seconds and completed at 80% in 1.643 seconds. An isolated Compose
+project with fresh volumes started from `lab up`, processed its first 80% job, and exported
+four searchable events. Its volumes were removed and the original stack/history restored.
 The fictional UI sample scores 80%, confirmed through Chrome on desktop and a mobile
 viewport. [See the evidence report screenshot](docs/assets/workbench.png).
 
@@ -134,4 +174,4 @@ never fall back to a demo score.
 
 This is an enterprise-oriented learning baseline, not a certified enterprise deployment.
 Production needs an operational design for SSO/RBAC, organization isolation, storage
-retention, network protections, abuse controls, observability and model evaluation.
+retention, network protections, abuse controls, operational alerts and model evaluation.

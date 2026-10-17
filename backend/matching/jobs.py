@@ -1,7 +1,8 @@
 """Database state is authoritative; RabbitMQ deliveries are repeatable wakeups."""
-import logging
+import time
 import uuid
 from datetime import timedelta
+from functools import partial
 
 from billiard.exceptions import SoftTimeLimitExceeded
 from django.conf import settings
@@ -12,17 +13,23 @@ from django.utils import timezone
 from config.celery import app
 from .models import Job, Match, OutboxEvent
 from .services import ProviderError, TransientProviderError, calculate_score, extract_evidence
+from .telemetry import emit
 
-audit = logging.getLogger("matching.audit")
+
+def job_event(event, job, stage, **extra):
+    attributes = {"request_id": job.request_id, "job_id": job.id, "stage": stage,
+                  "status": job.status, "attempt": job.attempts, "error_code": job.error_code, **extra}
+    transaction.on_commit(partial(emit, event, **attributes))
 
 
-def fail_job(job, code):
+def fail_job(job, code, stage="worker", duration_ms=0):
     job.status = Job.Status.FAILED
     job.error_code = code
     job.resume_text = ""
     job.lease_id = None
     job.lease_expires_at = None
     job.save()
+    job_event("job.failed", job, stage, duration_ms=duration_ms)
 
 
 def enqueue_again(job, now):
@@ -55,18 +62,18 @@ def claim_job(job_id):
         return job
 
 
-def finish_job(claim, evidence=None, error_code=None, transient=False):
+def finish_job(claim, evidence=None, error_code=None, transient=False, duration_ms=0):
     with transaction.atomic():
         job = Job.objects.select_for_update().filter(pk=claim.pk).first()
         now = timezone.now()
         if job is None or job.status != Job.Status.RUNNING or job.lease_id != claim.lease_id or job.lease_expires_at <= now:
             return False
         if job.deadline_at <= now:
-            fail_job(job, "deadline_exceeded")
+            fail_job(job, "deadline_exceeded", duration_ms=duration_ms)
         elif transient and job.attempts < settings.JOB_MAX_ATTEMPTS:
             enqueue_again(job, now)
         elif error_code:
-            fail_job(job, "retry_exhausted" if transient else error_code)
+            fail_job(job, "retry_exhausted" if transient else error_code, duration_ms=duration_ms)
         else:
             Match.objects.create(job=job, owner_id=job.owner_id, job_title=job.job_title, score=calculate_score(evidence), provider=job.provider, requirements=evidence, request_id=job.request_id)
             job.status = Job.Status.SUCCEEDED
@@ -74,7 +81,8 @@ def finish_job(claim, evidence=None, error_code=None, transient=False):
             job.lease_id = None
             job.lease_expires_at = None
             job.save()
-        audit.info("request_id=%s job_id=%s stage=worker status=%s attempt=%s", job.request_id, job.id, job.status, job.attempts)
+        if job.status != Job.Status.FAILED:
+            job_event("job.retry" if job.status == Job.Status.QUEUED else "job.succeeded", job, "worker", duration_ms=duration_ms, error_code=error_code)
         return True
 
 
@@ -86,18 +94,19 @@ def run_job(job_id):
     claim = claim_job(job_id)
     if claim is None:
         return
-    audit.info("request_id=%s job_id=%s stage=worker status=running attempt=%s", claim.request_id, claim.id, claim.attempts)
+    emit("job.started", request_id=claim.request_id, job_id=claim.id, stage="worker", status="running", attempt=claim.attempts)
+    started = time.monotonic()
     try:
         evidence = extract_evidence(claim.resume_text, claim.requirements, provider=claim.provider)
     except (TransientProviderError, SoftTimeLimitExceeded):
-        finish_job(claim, error_code="provider_unavailable", transient=True)
+        finish_job(claim, error_code="provider_unavailable", transient=True, duration_ms=int((time.monotonic() - started) * 1000))
     except ProviderError as exc:
-        finish_job(claim, error_code=exc.code)
+        finish_job(claim, error_code=exc.code, duration_ms=int((time.monotonic() - started) * 1000))
     except Exception:
         # Persist only a stable code: unexpected exception text may contain source or credentials.
-        finish_job(claim, error_code="processing_failed")
+        finish_job(claim, error_code="processing_failed", duration_ms=int((time.monotonic() - started) * 1000))
     else:
-        finish_job(claim, evidence=evidence)
+        finish_job(claim, evidence=evidence, duration_ms=int((time.monotonic() - started) * 1000))
 
 
 def recover_jobs(limit=100):
@@ -112,10 +121,10 @@ def recover_jobs(limit=100):
             if job is None or job.status not in {Job.Status.QUEUED, Job.Status.RUNNING}:
                 continue
             if job.deadline_at <= now:
-                fail_job(job, "deadline_exceeded")
+                fail_job(job, "deadline_exceeded", stage="recovery")
             elif job.status == Job.Status.RUNNING and job.lease_expires_at <= now:
                 if job.attempts >= settings.JOB_MAX_ATTEMPTS:
-                    fail_job(job, "retry_exhausted")
+                    fail_job(job, "retry_exhausted", stage="recovery")
                 else:
                     enqueue_again(job, now)
             elif job.status == Job.Status.QUEUED and job.wake_at <= now:
@@ -126,7 +135,7 @@ def recover_jobs(limit=100):
             else:
                 continue
             recovered += 1
-            audit.info("request_id=%s job_id=%s stage=recovery status=%s attempt=%s", job.request_id, job.id, job.status, job.attempts)
+            job_event("job.recovered", job, "recovery")
     return recovered
 
 
@@ -150,13 +159,17 @@ def relay_once(limit=100):
             event = OutboxEvent.objects.select_for_update(skip_locked=True).filter(sent_at__isnull=True, available_at__lte=timezone.now()).order_by("created_at").first()
             if event is None:
                 break
+            metadata = Job.objects.filter(pk=event.job_id).values("request_id", "attempts").first() or {}
             try:
                 publish_job(event.job_id)
             except Exception:
-                audit.warning("job_id=%s stage=relay status=unpublished", event.job_id)
+                transaction.on_commit(partial(emit, "job.publish_failed", job_id=event.job_id,
+                                             request_id=metadata.get("request_id"), stage="relay", status="unpublished",
+                                             attempt=metadata.get("attempts"), error_code="publish_unavailable"))
                 break
             event.sent_at = timezone.now()
             event.save(update_fields=["sent_at"])
             sent += 1
-            audit.info("job_id=%s stage=relay status=confirmed", event.job_id)
+            transaction.on_commit(partial(emit, "job.published", job_id=event.job_id,
+                                         request_id=metadata.get("request_id"), stage="relay", status="confirmed", attempt=metadata.get("attempts")))
     return sent

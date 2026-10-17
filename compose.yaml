@@ -19,6 +19,9 @@ x-backend: &backend
     RABBITMQ_HOST: broker
     RABBITMQ_USER: lab
     RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?Run ./scripts/lab up first}
+    OPENOBSERVE_PASSWORD: ${OPENOBSERVE_PASSWORD:?Run ./scripts/lab up first}
+    OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: http://openobserve:5080/api/default/v1/logs
+    LAB_SERVICE_NAME: api
   init: true
   read_only: true
   tmpfs:
@@ -80,6 +83,9 @@ services:
 
   worker:
     <<: *backend
+    environment:
+      <<: *backend-environment
+      LAB_SERVICE_NAME: worker
     command: [celery, -A, config, worker, --loglevel=WARNING, --concurrency=1, --hostname=worker@lab, --without-gossip, --without-mingle]
     depends_on:
       migrate:
@@ -95,6 +101,9 @@ services:
 
   relay:
     <<: *backend
+    environment:
+      <<: *backend-environment
+      LAB_SERVICE_NAME: relay
     command: [python, manage.py, relay_jobs]
     depends_on:
       migrate:
@@ -130,6 +139,46 @@ services:
     cap_drop: [ALL]
     restart: unless-stopped
 
+  openobserve:
+    build:
+      context: .
+      dockerfile: observability/Dockerfile
+    environment:
+      ZO_DATA_DIR: /data
+      ZO_LOCAL_MODE: "true"
+      ZO_TELEMETRY: "false"
+      ZO_ROOT_USER_EMAIL: lab@example.invalid
+      ZO_ROOT_USER_PASSWORD: ${OPENOBSERVE_PASSWORD:?Run ./scripts/lab up first}
+      ZO_COMPACT_DATA_RETENTION_DAYS: "3"
+      ZO_COMPACT_DATA_RETENTION_INTERVAL: "3600"
+      ZO_COMPACT_DELETE_FILES_DELAY_MINUTES: "120"
+      ZO_MEM_TABLE_MAX_SIZE: "64"
+      ZO_MAX_FILE_SIZE_IN_MEMORY: "16"
+      ZO_MEMORY_CACHE_DATAFUSION_MAX_SIZE: "256"
+      ZO_MEMORY_CACHE_ENABLED: "false"
+      ZO_DISK_CACHE_ENABLED: "false"
+      ZO_RESULT_CACHE_ENABLED: "false"
+      ZO_DISK_CIRCUIT_BREAKER_ENABLED: "true"
+      ZO_DISK_CIRCUIT_BREAKER_THRESHOLD: "1024"
+    ports:
+      - 127.0.0.1:5080:5080
+    volumes:
+      - openobserve-data:/data
+    mem_limit: 1g
+    read_only: true
+    tmpfs:
+      - /tmp:mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    healthcheck:
+      test: [CMD, /busybox, wget, -q, -O, /dev/null, http://127.0.0.1:5080/healthz]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+    restart: unless-stopped
+
 volumes:
   postgres-data:
   rabbitmq-data:
+  openobserve-data:

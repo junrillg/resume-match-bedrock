@@ -15,6 +15,7 @@ from django.utils import timezone
 
 from .models import Job, Match, OutboxEvent, RateBucket
 from .services import InvalidInput, read_requirements, read_resume
+from .telemetry import emit
 
 
 def error(request, message, status):
@@ -172,6 +173,7 @@ def jobs(request):
                                  available_at=now, wake_at=now + timedelta(seconds=settings.JOB_WAKE_SECONDS),
                                  deadline_at=now + timedelta(seconds=settings.JOB_DEADLINE_SECONDS))
         OutboxEvent.objects.create(job=job, available_at=now)
+    emit("job.accepted", request_id=job.request_id, job_id=job.id, stage="api", status="queued", attempt=0)
     return JsonResponse(serialize_job(job), status=202)
 
 

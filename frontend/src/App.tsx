@@ -258,6 +258,7 @@ export default function App() {
             <p className="job-message">{selectedJob.status === 'queued' ? 'Accepted and waiting for a worker. You can leave this page and return to check progress.' : selectedJob.status === 'running' ? 'A worker is extracting and checking the résumé evidence.' : selectedJob.status === 'succeeded' ? 'The evidence report is ready for your review.' : jobMessages[selectedJob.error_code ?? ''] || 'Processing stopped without a report. Review the reference below when investigating.'}</p>
             <p className="help">Processing attempts: {selectedJob.attempts}{selectedJob.error_code && <> · Error code: <code>{selectedJob.error_code}</code></>}</p>
             <dl className="trace-ids"><div><dt>Job ID</dt><dd>{selectedJob.id}</dd></div><div><dt>Request ID</dt><dd>{selectedJob.request_id}</dd></div></dl>
+            <p className="help">Search either ID in the <a href="http://127.0.0.1:5080" target="_blank" rel="noopener noreferrer">local OpenObserve log viewer (opens a new tab)</a> to follow this comparison across services.</p>
             {!displayedMatch && <button className="text-button danger" type="button" disabled={busy} onClick={() => setDeleteRequested(true)}>Delete this comparison</button>}
           </section>}
           {displayedMatch && <MatchResult match={displayedMatch} busy={busy} onDelete={() => setDeleteRequested(true)} />}
