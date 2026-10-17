@@ -8,7 +8,7 @@ describe('same-origin API boundary', () => {
     const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: 'report' }), { status: 201 }));
     vi.stubGlobal('fetch', fetcher);
     const body = new FormData();
-    body.set('resume_text', 'Fictional Python experience.');
+    body.set('resume_text', 'Synthetic Python experience.');
     await api('jobs/', { method: 'POST', body }, 'rotated-token');
     const [url, options] = fetcher.mock.calls[0];
     expect(url).toBe('/api/jobs/');

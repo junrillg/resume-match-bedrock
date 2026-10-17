@@ -15,7 +15,7 @@ from .jobs import job_event, run_job
 from .models import Job, OutboxEvent
 
 
-@override_settings(LAB_SERVICE_NAME="api", OTEL_LOGS_ENDPOINT="http://viewer.invalid/api/default/v1/logs", OPENOBSERVE_PASSWORD="fictional-telemetry-test-password")
+@override_settings(LAB_SERVICE_NAME="api", OTEL_LOGS_ENDPOINT="http://viewer.invalid/api/default/v1/logs", OPENOBSERVE_PASSWORD="synthetic-telemetry-test-password")
 class TelemetryTests(SimpleTestCase):
     def tearDown(self):
         telemetry._reset_after_fork()

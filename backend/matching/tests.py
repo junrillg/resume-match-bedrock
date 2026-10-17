@@ -85,8 +85,8 @@ class ScoringTests(SimpleTestCase):
         self.assertNotIn("score", result[0])
 
     @override_settings(MATCH_PROVIDER="demo")
-    def test_frontend_fictional_sample_has_eighty_percent_coverage(self):
-        text = "FICTIONAL SAMPLE — not a real candidate\n\nBackend engineer\nBuilt Python services and Django APIs for an internal inventory application.\nCreated React interfaces for searching products and reviewing stock.\nWrote integration tests and reviewed changes with the engineering team."
+    def test_frontend_synthetic_sample_has_eighty_percent_coverage(self):
+        text = "SYNTHETIC SAMPLE — not a real candidate\n\nBackend engineer\nBuilt Python services and Django APIs for an internal inventory application.\nCreated React interfaces for searching products and reviewing stock.\nWrote integration tests and reviewed changes with the engineering team."
         requirements = [{"skill": "Python", "weight": 3}, {"skill": "Django", "weight": 3}, {"skill": "React", "weight": 2}, {"skill": "PostgreSQL", "weight": 2}]
         result = extract_evidence(text, requirements)
         self.assertEqual(calculate_score(result), Decimal("80.00"))
@@ -166,11 +166,11 @@ class BedrockTests(SimpleTestCase):
 class APITests(TestCase):
     @classmethod
     def setUpTestData(cls):
-        cls.alice = get_user_model().objects.create_user("alice", password="Fictional-testing-password-2026!")
-        cls.bob = get_user_model().objects.create_user("bob", password="Other-fictional-password-2026!")
+        cls.alice = get_user_model().objects.create_user("alice", password="Synthetic-testing-password-2026!")
+        cls.bob = get_user_model().objects.create_user("bob", password="Other-synthetic-password-2026!")
 
     def form(self, **extra):
-        return {"job_title": "Fictional platform role", "resume_text": "Built Python APIs.", "requirements": '[{"skill":"Python","weight":3},{"skill":"Django","weight":2}]', **extra}
+        return {"job_title": "Synthetic platform role", "resume_text": "Built Python APIs.", "requirements": '[{"skill":"Python","weight":3},{"skill":"Django","weight":2}]', **extra}
 
     def post_job(self, **extra):
         return self.client.post("/api/jobs/", self.form(**extra), HTTP_IDEMPOTENCY_KEY=str(uuid.uuid4()))
@@ -183,8 +183,8 @@ class APITests(TestCase):
     def test_session_login_csrf_logout_flow(self):
         client = Client(enforce_csrf_checks=True)
         session = client.get("/api/session/").json()
-        self.assertEqual(client.post("/api/login/", data=json.dumps({"username": "alice", "password": "Fictional-testing-password-2026!"}), content_type="application/json").status_code, 403)
-        response = client.post("/api/login/", data=json.dumps({"username": "alice", "password": "Fictional-testing-password-2026!"}), content_type="application/json", HTTP_X_CSRFTOKEN=session["csrfToken"])
+        self.assertEqual(client.post("/api/login/", data=json.dumps({"username": "alice", "password": "Synthetic-testing-password-2026!"}), content_type="application/json").status_code, 403)
+        response = client.post("/api/login/", data=json.dumps({"username": "alice", "password": "Synthetic-testing-password-2026!"}), content_type="application/json", HTTP_X_CSRFTOKEN=session["csrfToken"])
         self.assertTrue(response.json()["authenticated"])
         token = response.json()["csrfToken"]
         self.assertEqual(client.post("/api/jobs/", self.form(), HTTP_IDEMPOTENCY_KEY=str(uuid.uuid4())).status_code, 403)
@@ -256,7 +256,7 @@ class APITests(TestCase):
         provider.assert_not_called()
 
     def test_legacy_match_delete_remains_owner_scoped(self):
-        legacy = Match.objects.create(owner=self.alice, job_title="Legacy fictional role", score=60, provider="demo", requirements=[], request_id=uuid.uuid4())
+        legacy = Match.objects.create(owner=self.alice, job_title="Legacy synthetic role", score=60, provider="demo", requirements=[], request_id=uuid.uuid4())
         self.client.force_login(self.bob)
         self.assertEqual(self.client.delete(f"/api/matches/{legacy.id}/").status_code, 404)
         self.assertTrue(Match.objects.filter(pk=legacy.id).exists())
@@ -278,14 +278,14 @@ class APITests(TestCase):
 
 @override_settings(DEBUG=True, MATCH_PROVIDER="demo")
 class LabAccountTests(TestCase):
-    @patch.dict("os.environ", {"LAB_DEMO_PASSWORD": "fictional-random-demo-password-123"})
+    @patch.dict("os.environ", {"LAB_DEMO_PASSWORD": "synthetic-random-demo-password-123"})
     def test_create_once_without_printing_or_resetting_password(self):
         output = io.StringIO()
         call_command("ensure_lab_user", stdout=output)
         user = get_user_model().objects.get(username="lab")
-        self.assertTrue(user.check_password("fictional-random-demo-password-123"))
+        self.assertTrue(user.check_password("synthetic-random-demo-password-123"))
         original_hash = user.password
-        with patch.dict("os.environ", {"LAB_DEMO_PASSWORD": "another-fictional-password-456"}):
+        with patch.dict("os.environ", {"LAB_DEMO_PASSWORD": "another-synthetic-password-456"}):
             call_command("ensure_lab_user", stdout=output)
         user.refresh_from_db()
         self.assertEqual(user.password, original_hash)

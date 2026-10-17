@@ -41,7 +41,7 @@ class StartupBoundaryTests(unittest.TestCase):
     def test_upgrade_preserves_values_and_adds_viewer_secret_once_with_private_mode(self):
         with tempfile.TemporaryDirectory() as directory:
             root, script, env = self.scaffold(directory)
-            original = "POSTGRES_PASSWORD=keep-fictional-db-value\nCUSTOM_SETTING=keep-this-too\n"
+            original = "POSTGRES_PASSWORD=keep-synthetic-db-value\nCUSTOM_SETTING=keep-this-too\n"
             state = root / ".env"
             state.write_text(original)
             state.chmod(0o644)
@@ -52,7 +52,7 @@ class StartupBoundaryTests(unittest.TestCase):
             self.assertEqual(upgraded.count("OPENOBSERVE_PASSWORD="), 1)
             self.assertRegex(upgraded, r"OPENOBSERVE_PASSWORD=Aa1![a-fA-F0-9]{64}")
             self.assertEqual(state.stat().st_mode & 0o777, 0o600)
-            self.assertNotIn("keep-fictional-db-value", first.stdout + first.stderr)
+            self.assertNotIn("keep-synthetic-db-value", first.stdout + first.stderr)
             self.assertNotIn("0000000000000001", first.stdout + first.stderr)
             second = subprocess.run(["sh", str(script), "up"], env=env, capture_output=True, text=True)
             self.assertEqual(second.returncode, 0, second.stderr)

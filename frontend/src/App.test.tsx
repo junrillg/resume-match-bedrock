@@ -40,7 +40,7 @@ async function click(name: string | RegExp) { await act(async () => { fireEvent.
 async function tick(milliseconds = 1000) { await act(async () => { await vi.advanceTimersByTimeAsync(milliseconds); }); }
 async function login() {
   fireEvent.change(screen.getByLabelText('Username'), { target: { value: 'reviewer' } });
-  fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'fictional-only' } });
+  fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'synthetic-only' } });
   await click('Sign in');
 }
 beforeEach(() => {
@@ -59,12 +59,12 @@ it('shows server-owned coverage, excerpts, and honest document gaps', () => {
 it('uses rotated CSRF, polls queued/running to success, stops, and confirms deletion', async () => {
   const { state, fetcher } = server(anonymous);
   state.post = async () => { state.jobs = [queued]; return json(queued, 202); };
-  await mount(); await login(); await click(/Use fictional sample/); await click(/Analyze evidence/);
+  await mount(); await login(); await click(/Use synthetic sample/); await click(/Analyze evidence/);
   expect(screen.getByText(/Accepted and waiting for a worker/)).toBeTruthy();
   const post = fetcher.mock.calls.find(([url, options]) => url === '/api/jobs/' && options.method === 'POST')![1];
   expect(new Headers(post.headers).get('X-CSRFToken')).toBe('rotated-token');
   expect(new Headers(post.headers).get('Idempotency-Key')).toMatch(/^[a-f0-9-]{36}$/);
-  expect((post.body as FormData).get('resume_text')).toContain('FICTIONAL SAMPLE');
+  expect((post.body as FormData).get('resume_text')).toContain('SYNTHETIC SAMPLE');
   expect((post.body as FormData).has('resume')).toBe(false);
   state.jobs = [{ ...queued, status: 'running', attempts: 1 }]; await tick();
   expect(screen.getByText(/A worker is extracting/)).toBeTruthy();
@@ -80,7 +80,7 @@ it('uses rotated CSRF, polls queued/running to success, stops, and confirms dele
 it('reuses the key after ambiguous transport failure and rotates for changed inputs', async () => {
   const { state, fetcher } = server();
   state.post = async () => { throw new TypeError('network lost'); };
-  await mount(); await click(/Use fictional sample/); await click(/Analyze evidence/); await tick(5000);
+  await mount(); await click(/Use synthetic sample/); await click(/Analyze evidence/); await tick(5000);
   expect(fetcher.mock.calls.filter(([, options]) => options.method === 'POST')).toHaveLength(1);
   await click('Retry same comparison');
   fireEvent.change(screen.getByLabelText('Role title'), { target: { value: 'Another role' } });
@@ -158,7 +158,7 @@ it('clears private drafts/keys on auth loss and ignores an old submission respon
   const { state, fetcher } = server(signedIn, [queued]);
   let finishPost!: (response: Response) => void;
   state.post = () => new Promise((resolve) => { finishPost = resolve; });
-  await mount(); await click(/Use fictional sample/); await click(/Analyze evidence/);
+  await mount(); await click(/Use synthetic sample/); await click(/Analyze evidence/);
   state.session = anonymous; state.readJobs = async () => json({ error: 'Sign in again.' }, 401); await tick();
   expect(screen.getByRole('heading', { name: 'Sign in to review a résumé' })).toBeTruthy();
   await act(async () => { finishPost(json({ ...queued, id: 'private-old-job' }, 202)); });
@@ -166,7 +166,7 @@ it('clears private drafts/keys on auth loss and ignores an old submission respon
   expect((screen.getByLabelText('Résumé text') as HTMLTextAreaElement).value).toBe('');
   expect(screen.queryByText('private-old-job')).toBeNull();
   state.post = async () => json({ ...queued, status: 'failed', error_code: 'retry_exhausted' }, 202);
-  await click(/Use fictional sample/); await click(/Analyze evidence/);
+  await click(/Use synthetic sample/); await click(/Analyze evidence/);
   const posts = fetcher.mock.calls.filter(([, options]) => options.method === 'POST' && options.body instanceof FormData);
   expect(new Headers(posts[0][1].headers).get('Idempotency-Key')).not.toBe(new Headers(posts[1][1].headers).get('Idempotency-Key'));
 });
@@ -192,7 +192,7 @@ it('makes a hung admission request retryable with the same idempotency key', asy
   state.post = (options) => new Promise((_resolve, reject) => {
     options.signal!.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
   });
-  await mount(); await click(/Use fictional sample/); await click(/Analyze evidence/);
+  await mount(); await click(/Use synthetic sample/); await click(/Analyze evidence/);
   await tick(10000);
   expect(screen.getByText(/The request timed out or was cancelled/)).toBeTruthy();
   state.post = async () => json(queued, 202);
@@ -207,7 +207,7 @@ it('preserves an ambiguous submission key when an unrelated report is deleted', 
   const { state, fetcher } = server(); state.matches = [report];
   state.post = async () => { throw new TypeError('response lost'); };
   await mount(); await click(/Full stack engineer.*60%/);
-  await click(/Use fictional sample/); await click(/Analyze evidence/);
+  await click(/Use synthetic sample/); await click(/Analyze evidence/);
   await click('Delete this report'); await click('Delete comparison');
   state.post = async () => json({ ...queued, status: 'failed', error_code: 'provider_rejected' }, 202);
   await click('Retry same comparison');

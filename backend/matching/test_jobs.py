@@ -18,7 +18,7 @@ from .services import ProviderError, TransientProviderError, extract_evidence
 from .tasks import process_job
 
 REQUIREMENTS = [{"skill": "Python", "weight": 3}, {"skill": "Django", "weight": 2}]
-SOURCE = "Fictional candidate built Python APIs."
+SOURCE = "Synthetic candidate built Python APIs."
 
 
 def make_job(owner, **changes):
@@ -67,7 +67,7 @@ class JobAPITests(TestCase):
     def test_same_key_conflicting_payload_is_409(self):
         key = uuid.uuid4()
         self.post(key)
-        self.assertEqual(self.post(key, resume_text="A different fictional Python résumé").status_code, 409)
+        self.assertEqual(self.post(key, resume_text="A different synthetic Python résumé").status_code, 409)
         self.assertEqual(Job.objects.count(), 1)
         self.assertEqual(RateBucket.objects.get(key__startswith="match:").count, 1)
 
