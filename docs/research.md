@@ -1,7 +1,8 @@
 # Research behind this design
 
-Checked **2026-10-17**. This is one defensible architecture for the bounded fictional
-workload in [the design](design.md), not a claim that every enterprise ATS uses it.
+Checked **2026-10-17**. Our architecture addresses the bounded résumé-review
+workload in [the design](design.md). The choices follow the requirements and source-backed
+tradeoffs documented here.
 Sources describe contracts; the repository's tests and container experiments establish
 which contracts the local implementation actually demonstrates.
 

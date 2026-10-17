@@ -2,7 +2,7 @@
 
 Read [the scenario and vocabulary](design.md) first. This reference implements one
 enterprise reliability pattern: durable admission of slow work, repeatable delivery,
-and one committed result. It is a fictional reviewer aid using synthetic documents.
+and one committed result. We designed it as a résumé review aid and verify it using synthetic documents.
 
 ![Numbered local flow: React and Django admit a job and outbox in PostgreSQL; a relay publishes a UUID to RabbitMQ, a worker processes under a fenced lease, and React reads the result. Dotted telemetry goes to OpenObserve. Bedrock remains disabled.](assets/architecture.svg)
 
@@ -12,7 +12,7 @@ with `./scripts/lab up`; database and broker ports remain private to Compose.
 
 ## Walk the successful input
 
-The fictional sample mentions Python, Django and React. Requirements assign weights
+The synthetic sample mentions Python, Django and React. Requirements assign weights
 3, 3, 2 and 2 to those skills and PostgreSQL. Application code counts 8 matched weight
 out of 10: 80%. This measures literal evidence coverage, not candidate quality,
 competence or a hiring recommendation.
@@ -125,5 +125,5 @@ is needed. More boxes would not strengthen this flow's stated guarantees.
 ![Nonliteral analogy: documents pass through a sieve, then selected evidence is weighed.](assets/evidence-concept.png)
 
 The illustration explains validation before scoring; it is not infrastructure. Continue
-with [the rebuild guide](implementation-guide.md), [ADRs](decisions/0001-durable-background-work.md)
+with [the implementation reference](implementation-guide.md), [ADRs](decisions/0001-durable-background-work.md)
 and [research](research.md).

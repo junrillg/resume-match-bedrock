@@ -1,19 +1,21 @@
 # Résumé Match · Evidence workbench
 
-A Django + React architecture lab for parsing résumés and reviewing transparent,
+A Django + React architecture case study for parsing résumés and reviewing transparent,
 weighted skill coverage. AWS Bedrock proposes quoted evidence; application code
 validates the quotes and calculates the score. The default demo stays entirely local.
 
 ![Numbered Docker flow: React and Django commit jobs/outbox in PostgreSQL; RabbitMQ and a leased worker deliver one validated result; OpenObserve searches safe lifecycle events.](docs/assets/architecture.svg)
 
-## Understand and rebuild
+## Architecture and implementation
 
-Start with [the scenario and vocabulary](docs/design.md), trace [the shipped architecture](docs/architecture.md),
-read [the decisions](docs/decisions/0001-durable-background-work.md), then use
-[the independent rebuild guide](docs/implementation-guide.md). [Research](docs/research.md)
-explains the contracts; [learning resources](docs/learning-resources.md) provide optional
-LinkedIn Learning and public video/tutorial support. The UI tracks durable job progress, and the
-local log viewer traces one request across API, relay and worker.
+[The design](docs/design.md) defines the scenario, service responsibilities and reliability
+boundaries. [The shipped architecture](docs/architecture.md) traces a submission through
+admission, queue delivery, processing and recovery. [Architecture decisions](docs/decisions/0001-durable-background-work.md)
+and [research](docs/research.md) explain the trade-offs and supporting contracts.
+[The implementation reference](docs/implementation-guide.md) maps those decisions to code,
+operating checks and the actual build history. Run and verification commands are below.
+The UI tracks durable job progress, and the local log viewer correlates one request across
+API, relay and worker.
 
 ## Run locally
 
@@ -36,7 +38,7 @@ the matches API retains read/delete access to existing reports.
 `./scripts/lab down` stops containers while retaining database, broker and log volumes. Your
 existing development SQLite database is separate and untouched. Keep `.env` with the named
 volumes: regenerating its passwords does not change passwords already initialized in them.
-Use `./scripts/lab help` for commands. The stack is a local HTTP learning environment with
+Use `./scripts/lab help` for commands. The stack is a local HTTP development environment with
 synthetic data and Django debug enabled, not an internet deployment.
 
 ## Search one job across services
@@ -144,7 +146,7 @@ full records contained no document or credential fields. With the viewer stopped
 was accepted in 0.057 seconds and completed at 80% in 1.643 seconds. An isolated Compose
 project with fresh volumes started from `lab up`, processed its first 80% job, and exported
 four searchable events. Its volumes were removed and the original stack/history restored.
-The fictional UI sample scores 80%, confirmed through Chrome on desktop and a mobile
+The synthetic UI sample scores 80%, confirmed through Chrome on desktop and a mobile
 viewport. [See the evidence report screenshot](docs/assets/workbench.png).
 
 Tests cover scoring and extraction boundaries, owner isolation, enforced CSRF, file
@@ -179,6 +181,6 @@ never fall back to a demo score.
 | `frontend/src/` | React forms, authenticated requests, score evidence and history |
 | `docs/assets/architecture.mmd` | Editable implementation diagram |
 
-This is an enterprise-oriented learning baseline, not a certified enterprise deployment.
-Production needs an operational design for SSO/RBAC, organization isolation, storage
+The local deployment runs on a single node. Production operation requires a separate
+design for SSO/RBAC, organization isolation, storage
 retention, network protections, abuse controls, operational alerts and model evaluation.

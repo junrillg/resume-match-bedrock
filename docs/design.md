@@ -5,9 +5,9 @@ involve a slow or unavailable model. The application should accept durable work 
 show progress, survive delivery failures and commit one result for a logical submission.
 It should also make that journey visible without logging document contents.
 
-This is a **fictional design scenario**, not an employer's internal system. The scope
-is one authenticated review flow. It is an enterprise pattern implemented locally;
-single-node Docker Compose does not provide a production cluster or HA.
+We designed this system around one authenticated résumé review flow, with durable
+background processing and inspectable evidence. Docker Compose runs the complete
+architecture locally; the single-node deployment has no production cluster or HA.
 
 ## Vocabulary before services
 
@@ -90,8 +90,8 @@ choices before the remaining UI and observability implementation at that point i
 | Durable job processing | Job/outbox API, relay, worker, recovery | Broker outage retains work; restart completes one result; concurrency tests fence duplicates. |
 | Job-aware UI | React submission, polling, queued/terminal states | Real HTTP admission and state progression; source/drafts stay isolated on auth loss. |
 | Searchable observability | Structured events, OTLP export, OSS viewer | Query one job across services; sensitive fields absent; viewer outage does not stop work. |
-| Learning documentation | Numbered diagrams, code map, rebuild guide, topic lessons | A newcomer can trace one input, explain the decisions and begin reimplementation. |
+| Architecture documentation | Numbered diagrams, code map, implementation reference and ADRs | Service boundaries, failure guarantees and operating checks can be traced to source. |
 
 Each implementation milestone includes its boundary checks before its real commit/push.
 See [research sources](research.md), [the architecture](architecture.md), then the
-[implementation guide](implementation-guide.md) as that final guide is completed.
+[implementation reference](implementation-guide.md).
