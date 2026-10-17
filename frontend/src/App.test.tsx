@@ -215,3 +215,25 @@ it('preserves an ambiguous submission key when an unrelated report is deleted', 
   expect(posts).toHaveLength(2);
   expect(new Headers(posts[0][1].headers).get('Idempotency-Key')).toBe(new Headers(posts[1][1].headers).get('Idempotency-Key'));
 });
+
+
+it.each([
+  ['demo', 'Demo · local deterministic', 'The worker extracts literal skill mentions'],
+  ['bedrock-local', 'Local contract provider', 'a separate local provider service'],
+  ['bedrock', 'AWS Bedrock', 'AWS Bedrock in the configured region'],
+] as const)('names the %s provider and discloses its actual processing boundary', async (provider, label, disclosure) => {
+  server({ ...signedIn, provider });
+  await mount();
+  expect(screen.getByText(label)).toBeTruthy();
+  expect(screen.getByText(new RegExp(disclosure))).toBeTruthy();
+});
+
+it('shows the configured log viewer and omits the link when unavailable', async () => {
+  const { state } = server({ ...signedIn, log_viewer_url: 'http://127.0.0.1:5080' }, [queued]);
+  await mount();
+  expect(screen.getByRole('link', { name: /OpenObserve log viewer/ }).getAttribute('href')).toBe('http://127.0.0.1:5080');
+  cleanup();
+  state.session = signedIn;
+  await mount();
+  expect(screen.queryByRole('link', { name: /OpenObserve log viewer/ })).toBeNull();
+});

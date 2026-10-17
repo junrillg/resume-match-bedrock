@@ -1,9 +1,11 @@
 import io
 import json
 import re
+import uuid
 from decimal import Decimal, ROUND_HALF_UP
 
 import boto3
+from botocore import UNSIGNED
 from botocore.config import Config
 from botocore.exceptions import (BotoCoreError, ClientError, ConnectionClosedError,
                                 ConnectTimeoutError, EndpointConnectionError, ReadTimeoutError)
@@ -126,30 +128,56 @@ Return only a JSON array, one object per requested skill, with no markdown or ot
 Do not infer equivalent technologies, invent experience or repeat personal contact details."""
 
 
-def bedrock_request(text, requirements):
-    return {
+def correlation_ids(metadata):
+    safe = {}
+    for key in ("request_id", "job_id"):
+        try:
+            safe[key] = str(uuid.UUID(str((metadata or {})[key])))
+        except (ValueError, TypeError, KeyError, AttributeError):
+            pass
+    return safe
+
+
+def bedrock_request(text, requirements, correlation=None):
+    request = {
         "modelId": settings.BEDROCK_MODEL_ID,
         "system": [{"text": SYSTEM_PROMPT}],
         "messages": [{"role": "user", "content": [{"text": json.dumps({"requested_skills": [item["skill"] for item in requirements], "resume_text": text}, ensure_ascii=False)}]}],
         "inferenceConfig": {"maxTokens": 4096, "temperature": 0},
     }
+    if metadata := correlation_ids(correlation):
+        request["requestMetadata"] = metadata
+    return request
 
 
-def extract_evidence(text, requirements, provider=None):
-    if (provider or settings.MATCH_PROVIDER) == "demo":
-        extracted = []
-        for requirement in requirements:
-            skill = requirement["skill"]
-            match = literal_match(skill, text)
-            quote = text[max(0, match.start() - 50): min(len(text), match.end() + 80)] if match else None
-            extracted.append({"skill": skill, "evidence": quote})
+def literal_evidence(text, requirements):
+    extracted = []
+    for requirement in requirements:
+        skill = requirement["skill"]
+        match = literal_match(skill, text)
+        quote = text[max(0, match.start() - 50): min(len(text), match.end() + 80)] if match else None
+        extracted.append({"skill": skill, "evidence": quote})
+    return extracted
+
+
+def extract_evidence(text, requirements, provider=None, correlation=None):
+    provider = provider or settings.MATCH_PROVIDER
+    if provider == "demo":
+        extracted = literal_evidence(text, requirements)
     else:
         try:
+            local = provider == "bedrock-local"
+            kwargs = {}
+            if local:
+                # Explicit non-secret placeholders and UNSIGNED bypass all credential/IMDS discovery.
+                kwargs = {"endpoint_url": settings.BEDROCK_LOCAL_ENDPOINT,
+                          "aws_access_key_id": "local-contract", "aws_secret_access_key": "local-contract"}
             client = boto3.client("bedrock-runtime", region_name=settings.BEDROCK_REGION, config=Config(
-                connect_timeout=3, read_timeout=30,
+                connect_timeout=3, read_timeout=settings.BEDROCK_READ_TIMEOUT_SECONDS,
                 retries={"mode": "standard", "total_max_attempts": 1},
-            ))
-            response = client.converse(**bedrock_request(text, requirements))
+                **({"signature_version": UNSIGNED, "proxies": {}} if local else {}),
+            ), **kwargs)
+            response = client.converse(**bedrock_request(text, requirements, correlation))
             if response.get("stopReason") != "end_turn":
                 raise ProviderError()
             blocks = response["output"]["message"]["content"]

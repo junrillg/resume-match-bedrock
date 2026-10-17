@@ -97,7 +97,12 @@ def run_job(job_id):
     emit("job.started", request_id=claim.request_id, job_id=claim.id, stage="worker", status="running", attempt=claim.attempts)
     started = time.monotonic()
     try:
-        evidence = extract_evidence(claim.resume_text, claim.requirements, provider=claim.provider)
+        if claim.provider != "demo":
+            emit("provider.requested", request_id=claim.request_id, job_id=claim.id, stage="worker", status="running", attempt=claim.attempts)
+        evidence = extract_evidence(claim.resume_text, claim.requirements, provider=claim.provider,
+                                    correlation={"request_id": claim.request_id, "job_id": claim.id})
+        if claim.provider != "demo":
+            emit("provider.responded", request_id=claim.request_id, job_id=claim.id, stage="worker", status="running", attempt=claim.attempts, duration_ms=int((time.monotonic() - started) * 1000))
     except (TransientProviderError, SoftTimeLimitExceeded):
         finish_job(claim, error_code="provider_unavailable", transient=True, duration_ms=int((time.monotonic() - started) * 1000))
     except ProviderError as exc:
@@ -140,12 +145,12 @@ def recover_jobs(limit=100):
 
 
 def publish_job(job_id):
-    queue = app.amqp.queues["resume.match"]
+    queue = app.amqp.queues["resume.match.quorum"]
     with app.connection_for_write() as connection:
         connection.ensure_connection(max_retries=0)
         with app.amqp.Producer(connection) as producer:
             app.send_task("matching.process_job", args=[str(job_id)], producer=producer,
-                          queue=queue, routing_key="resume.match", exchange=queue.exchange,
+                          queue=queue, routing_key="resume.match.quorum", exchange=queue.exchange,
                           declare=[queue], serializer="json", delivery_mode=2,
                           retry=False, mandatory=True, confirm_timeout=3,
                           ignore_result=True)

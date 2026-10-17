@@ -8,7 +8,7 @@ from kombu import Exchange, Queue
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
 app = Celery("resume_match")
 app.config_from_object("django.conf:settings", namespace="CELERY")
-app.conf.task_queues = (Queue("resume.match", Exchange("resume.match", type="direct", durable=True), routing_key="resume.match", durable=True),)
+app.conf.task_queues = (Queue("resume.match.quorum", Exchange("resume.match.quorum", type="direct", durable=True), routing_key="resume.match.quorum", durable=True, queue_arguments={"x-queue-type": "quorum"}),)
 app.autodiscover_tasks()
 
 

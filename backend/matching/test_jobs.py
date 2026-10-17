@@ -262,9 +262,10 @@ class JobStateTests(TestCase):
         self.assertIsNone(app.conf.result_backend)
         self.assertFalse(app.conf.task_always_eager)
         self.assertTrue(app.conf.broker_transport_options["confirm_publish"])
-        queue = app.amqp.queues["resume.match"]
+        queue = app.amqp.queues["resume.match.quorum"]
         self.assertTrue(queue.durable and queue.exchange.durable)
-        self.assertEqual(queue.routing_key, "resume.match")
+        self.assertEqual(queue.queue_arguments, {"x-queue-type": "quorum"})
+        self.assertEqual(queue.routing_key, "resume.match.quorum")
         self.assertLess(app.conf.task_time_limit, settings.JOB_LEASE_SECONDS)
 
     def test_unexpected_task_failure_never_reaches_celery_exception_formatter(self):

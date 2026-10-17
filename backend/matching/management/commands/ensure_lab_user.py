@@ -9,7 +9,7 @@ class Command(BaseCommand):
     help = "Create the local synthetic lab account once; never print or reset its password."
 
     def handle(self, *args, **options):
-        if not settings.DEBUG or settings.MATCH_PROVIDER != "demo":
+        if not settings.DEBUG or settings.MATCH_PROVIDER not in {"demo", "bedrock-local"}:
             raise CommandError("The synthetic account is restricted to the local demo.")
         password = os.getenv("LAB_DEMO_PASSWORD", "")
         if len(password) < 24:

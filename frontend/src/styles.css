@@ -37,9 +37,9 @@ h2 { font-size: 23px; line-height: 1.25; letter-spacing: -.65px; margin: 0; font
 h3 { margin: 0; font-size: 14px; font-weight: 600; }
 p { margin: 0 0 12px; }
 label { display: block; font-size: 12px; font-weight: 600; margin-bottom: 7px; }
-input:not([type=radio]), textarea { width: 100%; border: 1px solid #becac2; border-radius: 3px; padding: 11px 12px; color: #172b35; background: #fffefa; font-size: 13px; }
-input:not([type=radio]):hover, textarea:hover { border-color: #7d9c8a; }
-input::placeholder, textarea::placeholder { color: #71807d; }
+input:not([type=radio]), textarea { width: 100%; border: 1px solid #7d8d82; border-radius: 3px; padding: 11px 12px; color: #172b35; background: #fffefa; font-size: 13px; }
+input:not([type=radio]):hover, textarea:hover { border-color: #586f60; }
+input::placeholder, textarea::placeholder { color: #5d6c70; }
 textarea { resize: vertical; line-height: 1.65; min-height: 190px; }
 fieldset { border: 0; border-top: 1px solid var(--line); margin: 0 0 26px; padding: 22px 0 0; min-width: 0; }
 .step-title { padding: 0 12px 0 0; font-size: 13px; font-weight: 600; }

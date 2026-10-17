@@ -1,6 +1,7 @@
 import os
+import ssl
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 from django.core.exceptions import ImproperlyConfigured
 
@@ -14,6 +15,7 @@ INSTALLED_APPS = ["django.contrib.auth", "django.contrib.contenttypes", "django.
 MIDDLEWARE = [
     "matching.middleware.RequestMetadataMiddleware",
     "django.middleware.security.SecurityMiddleware",
+    "matching.middleware.ReadinessMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -31,7 +33,12 @@ if os.getenv("POSTGRES_HOST"):
         "PASSWORD": os.environ["POSTGRES_PASSWORD"],
         "CONN_MAX_AGE": 60,
         "CONN_HEALTH_CHECKS": True,
+        "OPTIONS": {"connect_timeout": 3},
     }}
+    if os.getenv("POSTGRES_SSLMODE"):
+        if os.environ["POSTGRES_SSLMODE"] != "verify-full" or not os.getenv("POSTGRES_SSLROOTCERT"):
+            raise ImproperlyConfigured("Database TLS requires verify-full and POSTGRES_SSLROOTCERT.")
+        DATABASES["default"]["OPTIONS"].update(sslmode="verify-full", sslrootcert=os.environ["POSTGRES_SSLROOTCERT"])
 else:
     DATABASES = {"default": {"ENGINE": "django.db.backends.sqlite3", "NAME": BASE_DIR / "db.sqlite3", "OPTIONS": {"timeout": 10}}}
 AUTH_PASSWORD_VALIDATORS = [
@@ -57,6 +64,10 @@ SESSION_COOKIE_SECURE = not DEBUG
 CSRF_COOKIE_SECURE = not DEBUG
 SECURE_CONTENT_TYPE_NOSNIFF = True
 SECURE_SSL_REDIRECT = not DEBUG
+SECURE_REDIRECT_EXEMPT = [r"^api/health/$"]
+# Enable only behind the isolated, co-located proxy that overwrites this header.
+if os.getenv("DJANGO_TRUST_PROXY", "false").lower() == "true":
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 SECURE_HSTS_SECONDS = 0 if DEBUG else 31536000
 SECURE_HSTS_INCLUDE_SUBDOMAINS = not DEBUG
 SECURE_HSTS_PRELOAD = not DEBUG
@@ -64,10 +75,25 @@ X_FRAME_OPTIONS = "DENY"
 MATCH_PROVIDER = os.getenv("MATCH_PROVIDER", "demo")
 BEDROCK_REGION = os.getenv("AWS_REGION", "")
 BEDROCK_MODEL_ID = os.getenv("BEDROCK_MODEL_ID", "")
-if MATCH_PROVIDER not in {"demo", "bedrock"}:
-    raise ImproperlyConfigured("MATCH_PROVIDER must be demo or bedrock.")
+BEDROCK_LOCAL_ENDPOINT = os.getenv("BEDROCK_LOCAL_ENDPOINT", "")
+BEDROCK_READ_TIMEOUT_SECONDS = 30
+if MATCH_PROVIDER not in {"demo", "bedrock-local", "bedrock"}:
+    raise ImproperlyConfigured("MATCH_PROVIDER must be demo, bedrock-local or bedrock.")
 if MATCH_PROVIDER == "bedrock" and not (BEDROCK_REGION and BEDROCK_MODEL_ID):
     raise ImproperlyConfigured("Bedrock requires AWS_REGION and BEDROCK_MODEL_ID.")
+if BEDROCK_LOCAL_ENDPOINT:
+    endpoint = urlsplit(BEDROCK_LOCAL_ENDPOINT)
+    if endpoint.scheme != "http" or endpoint.hostname not in {"provider", "localhost", "127.0.0.1", "::1"} or endpoint.username or endpoint.password or endpoint.path or endpoint.query or endpoint.fragment:
+        raise ImproperlyConfigured("BEDROCK_LOCAL_ENDPOINT must name the local HTTP contract service.")
+    if MATCH_PROVIDER != "bedrock-local":
+        raise ImproperlyConfigured("A local endpoint is valid only for bedrock-local.")
+if MATCH_PROVIDER == "bedrock-local" and (not DEBUG or not BEDROCK_LOCAL_ENDPOINT or BEDROCK_MODEL_ID != "local-evidence-v1" or not BEDROCK_REGION):
+    raise ImproperlyConfigured("bedrock-local requires development mode, local endpoint, region and local-evidence-v1 model.")
+LOG_VIEWER_URL = os.getenv("LOG_VIEWER_URL", "")
+if LOG_VIEWER_URL:
+    viewer = urlsplit(LOG_VIEWER_URL)
+    if viewer.scheme not in {"http", "https"} or not viewer.hostname or viewer.username or viewer.password:
+        raise ImproperlyConfigured("LOG_VIEWER_URL must be an HTTP(S) URL without credentials.")
 MATCH_DAILY_LIMIT = 20
 OTEL_LOGS_ENDPOINT = os.getenv("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT", "")
 OPENOBSERVE_PASSWORD = os.getenv("OPENOBSERVE_PASSWORD", "")
@@ -77,11 +103,17 @@ JOB_DEADLINE_SECONDS = 600
 JOB_LEASE_SECONDS = 90
 JOB_WAKE_SECONDS = 30
 JOB_RETRY_SECONDS = 2
-CELERY_BROKER_URL = "amqp://{}:{}@{}:5672//".format(
+RABBITMQ_TLS = os.getenv("RABBITMQ_TLS", "false").lower() == "true"
+CELERY_BROKER_URL = "{}://{}:{}@{}:{}//".format(
+    "amqps" if RABBITMQ_TLS else "amqp",
     quote(os.getenv("RABBITMQ_USER", "lab"), safe=""),
     quote(os.getenv("RABBITMQ_PASSWORD", ""), safe=""),
     os.getenv("RABBITMQ_HOST", "127.0.0.1"),
+    5671 if RABBITMQ_TLS else 5672,
 )
+if RABBITMQ_TLS:
+    # py-amqp enables SSLContext.check_hostname when server_hostname is present.
+    CELERY_BROKER_USE_SSL = {"cert_reqs": ssl.CERT_REQUIRED, "server_hostname": os.getenv("RABBITMQ_HOST", "127.0.0.1")}
 CELERY_BROKER_CONNECTION_TIMEOUT = 3
 CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
 CELERY_BROKER_HEARTBEAT = 10
@@ -98,9 +130,10 @@ CELERY_WORKER_CANCEL_LONG_RUNNING_TASKS_ON_CONNECTION_LOSS = True
 CELERY_TASK_SOFT_TIME_LIMIT = 50
 CELERY_TASK_TIME_LIMIT = 60
 CELERY_TASK_CREATE_MISSING_QUEUES = False
-CELERY_TASK_DEFAULT_QUEUE = "resume.match"
-CELERY_TASK_DEFAULT_EXCHANGE = "resume.match"
-CELERY_TASK_DEFAULT_ROUTING_KEY = "resume.match"
+CELERY_TASK_DEFAULT_QUEUE = "resume.match.quorum"
+CELERY_TASK_DEFAULT_QUEUE_TYPE = "quorum"
+CELERY_TASK_DEFAULT_EXCHANGE = "resume.match.quorum"
+CELERY_TASK_DEFAULT_ROUTING_KEY = "resume.match.quorum"
 CELERY_TASK_DEFAULT_DELIVERY_MODE = "persistent"
 CELERY_TASK_PUBLISH_RETRY = False
 LOGGING = {"version": 1, "disable_existing_loggers": False, "handlers": {"console": {"class": "logging.StreamHandler"}}, "loggers": {"matching.audit": {"handlers": ["console"], "level": "INFO", "propagate": False}}}

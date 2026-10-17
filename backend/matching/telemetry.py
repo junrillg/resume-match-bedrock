@@ -15,8 +15,8 @@ from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
 from opentelemetry.sdk.resources import Resource
 
 EVENTS = {"job.accepted", "job.published", "job.started", "job.retry", "job.succeeded",
-          "job.failed", "job.recovered", "job.publish_failed", "job.interrupted"}
-STAGES = {"api", "relay", "worker", "recovery"}
+          "job.failed", "job.recovered", "job.publish_failed", "job.interrupted", "provider.requested", "provider.responded", "provider.completed"}
+STAGES = {"api", "relay", "worker", "recovery", "provider"}
 STATUSES = {"queued", "running", "succeeded", "failed", "confirmed", "unpublished", "interrupted"}
 ERRORS = {"invalid_evidence", "provider_rejected", "processing_failed", "retry_exhausted",
           "deadline_exceeded", "provider_unavailable", "publish_unavailable"}
@@ -53,7 +53,7 @@ def _get_logger():
             exporter = OTLPLogExporter(endpoint=settings.OTEL_LOGS_ENDPOINT, timeout=0.5,
                                        headers={"Authorization": "Basic " + credentials, "stream-name": "resume_match"},
                                        max_request_size=262_144)
-            service = settings.LAB_SERVICE_NAME if settings.LAB_SERVICE_NAME in {"api", "relay", "worker"} else "unknown"
+            service = settings.LAB_SERVICE_NAME if settings.LAB_SERVICE_NAME in {"api", "relay", "worker", "provider"} else "unknown"
             provider = LoggerProvider(resource=Resource({"service.name": service}), shutdown_on_exit=False)
             provider.add_log_record_processor(BatchLogRecordProcessor(
                 exporter, max_queue_size=256, max_export_batch_size=32, schedule_delay_millis=1000,
@@ -80,7 +80,7 @@ def emit(event, **attributes):
         value = attributes.get(key)
         if type(value) is int and 0 <= value <= maximum:
             safe[key] = value
-    safe["service_name"] = settings.LAB_SERVICE_NAME if settings.LAB_SERVICE_NAME in {"api", "relay", "worker"} else "unknown"
+    safe["service_name"] = settings.LAB_SERVICE_NAME if settings.LAB_SERVICE_NAME in {"api", "relay", "worker", "provider"} else "unknown"
     failed = event in {"job.failed", "job.interrupted", "job.publish_failed"}
     audit.log(logging.ERROR if failed else logging.INFO, "%s", json.dumps({"event": event, **safe}, sort_keys=True))
     try:

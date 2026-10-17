@@ -7,6 +7,18 @@ from django.http import JsonResponse
 audit = logging.getLogger("matching.audit")
 
 
+class ReadinessMiddleware:
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        # ALB health probes use the target IP Host, not the public DNS name.
+        if request.path_info == "/api/health/":
+            from .views import health
+            return health(request)
+        return self.get_response(request)
+
+
 class RequestMetadataMiddleware:
     def __init__(self, get_response):
         self.get_response = get_response

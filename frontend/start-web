@@ -1,0 +1,24 @@
+#!/bin/sh
+set -eu
+
+FRONTEND_API_UPSTREAM=${FRONTEND_API_UPSTREAM:-api:8000}
+case "$FRONTEND_API_UPSTREAM" in
+    api:8000) FRONTEND_DNS_RESOLVER=127.0.0.11 ;;
+    127.0.0.1:8000) FRONTEND_DNS_RESOLVER=169.254.169.253 ;;
+    *) echo 'FRONTEND_API_UPSTREAM must be api:8000 or 127.0.0.1:8000' >&2; exit 1 ;;
+esac
+case "${FRONTEND_TRUST_ALB_PROTO:-false}" in
+    false) FRONTEND_PROTO_RULE='' ;;
+    true)
+        # Only a co-located API behind the ALB-only web port may trust this header.
+        [ "$FRONTEND_API_UPSTREAM" = '127.0.0.1:8000' ] || {
+            echo 'Trusted ALB forwarding requires the co-located API' >&2; exit 1;
+        }
+        FRONTEND_PROTO_RULE='https https;'
+        ;;
+    *) echo 'FRONTEND_TRUST_ALB_PROTO must be true or false' >&2; exit 1 ;;
+esac
+export FRONTEND_API_UPSTREAM FRONTEND_DNS_RESOLVER FRONTEND_PROTO_RULE
+envsubst '${FRONTEND_API_UPSTREAM} ${FRONTEND_DNS_RESOLVER} ${FRONTEND_PROTO_RULE}' \
+    < /etc/nginx/nginx.conf.template > /tmp/nginx.conf
+exec nginx -c /tmp/nginx.conf "$@"

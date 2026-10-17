@@ -8,7 +8,7 @@ from django.contrib import auth
 from django.contrib.auth import get_user_model
 from django.core.exceptions import RequestDataTooBig, TooManyFieldsSent, TooManyFilesSent
 from django.db.models import F
-from django.db import transaction
+from django.db import connection, transaction, DatabaseError
 from django.http import JsonResponse
 from django.middleware.csrf import get_token
 from django.utils import timezone
@@ -35,10 +35,21 @@ def server_error(request):
 
 
 def session_payload(request):
-    payload = {"authenticated": request.user.is_authenticated, "csrfToken": get_token(request), "provider": settings.MATCH_PROVIDER}
+    payload = {"authenticated": request.user.is_authenticated, "csrfToken": get_token(request), "provider": settings.MATCH_PROVIDER, "log_viewer_url": settings.LOG_VIEWER_URL}
     if request.user.is_authenticated:
         payload["username"] = request.user.get_username()
     return payload
+
+
+def health(request):
+    if request.method != "GET":
+        return JsonResponse({"status": "unavailable"}, status=405)
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT 1")
+    except DatabaseError:
+        return JsonResponse({"status": "unavailable"}, status=503)
+    return JsonResponse({"status": "ready"})
 
 
 def session(request):

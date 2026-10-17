@@ -2,14 +2,15 @@ export type Session = {
   authenticated: boolean;
   username?: string;
   csrfToken: string;
-  provider: 'demo' | 'bedrock';
+  log_viewer_url?: string;
+  provider: 'demo' | 'bedrock-local' | 'bedrock';
 };
 export type Requirement = { skill: string; weight: number };
 export type Match = {
   id: string;
   job_title: string;
   score: number;
-  provider: 'demo' | 'bedrock';
+  provider: Session['provider'];
   created_at: string;
   requirements: (Requirement & { matched: boolean; evidence: string | null })[];
   request_id: string;
