@@ -1,23 +1,32 @@
 # Résumé Match · Evidence workbench
 
-We designed a Django + React system that turns résumé text and weighted requirements
-into a reviewable evidence report. Slow work runs through a durable queue; application
-code validates each quoted skill mention and calculates the score.
+A reviewer pastes résumé text or selects a PDF/TXT file, sets skill weights and clicks
+**Analyze evidence**. The page receives a job receipt, tracks its state, then displays
+a score and supporting source quotes.
 
-![Numbered local flow: React submits a job; Django commits job and outbox; relay and RabbitMQ deliver work; the worker validates evidence and saves a score; React reads the result.](docs/assets/architecture.svg)
+We designed the Django + React system to keep accepted work safe during interruptions.
+A background worker validates the evidence; application code calculates weighted coverage.
+
+![Service-desk analogy: prepare a form, record it and receive a receipt, dispatch a ticket, check and save evidence, then collect the report.](docs/assets/request-journey-analogy.png)
+
+The ledger represents PostgreSQL; the dispatch tray represents RabbitMQ; the specialist
+represents the worker. The browser checks its receipt to collect the saved report.
+The picture groups relay/queue as Dispatch and processing/save as Check + save.
+It omits redelivery, claim checks and concurrent polling.
+[The technical diagram](docs/architecture.md) expands those responsibilities into the seven steps below.
 
 ## One comparison, end to end
 
-1. **Submit:** React sends the document, requirements and a retry identity.
+1. **Submit:** React sends the selected document, weighted requirements and a key that identifies retries of the same comparison.
 2. **Accept:** Django commits the job and dispatch intent together in PostgreSQL, then returns `202 Accepted`.
 3. **Relay:** the relay reads that intent and waits for broker confirmation before marking it sent.
-4. **Queue:** RabbitMQ retains the job UUID for worker delivery.
-5. **Process:** a Celery worker claims the job for a bounded time and extracts proposed evidence.
-6. **Save:** code validates the quotes, computes weighted coverage and commits one result.
-7. **Review:** React reads durable progress and the report. Request IDs connect safe logs across services in OpenObserve.
+4. **Queue:** RabbitMQ retains the job ID, rather than document content, for worker delivery.
+5. **Process:** a Celery worker claims the job for a bounded time, extracts proposed evidence and validates the quotes.
+6. **Save:** code checks that the worker still owns the claim, computes weighted coverage and commits one result.
+7. **Read:** React reads durable progress and the report. Request IDs connect safe logs across services in OpenObserve.
 
 The database remains the source of truth when delivery repeats or the broker is unavailable.
-Provider calls may repeat; the guarantee is one committed result per job.
+Provider calls may repeat; the guarantee is at most one committed result per job.
 
 ## Run with Docker
 
@@ -42,7 +51,7 @@ with those volumes; it holds their existing passwords. `./scripts/lab help` list
 - [Implementation reference](docs/implementation-guide.md): source map, API, log search, checks and observed results.
 
 Local checks cover concurrent admission, duplicate workers, broker interruption and
-log-viewer failure. [Report screenshot](docs/assets/workbench.png) · [Log search screenshot](docs/assets/log-search.png).
+log-viewer failure. [Log search screenshot](docs/assets/log-search.png).
 
 **Boundaries:** use synthetic data. This is a single-node local HTTP deployment with
 Django debug enabled. Scores measure literal evidence coverage, not candidate quality.

@@ -1,10 +1,16 @@
 # Résumé comparison execution
 
-Read [the scenario and vocabulary](design.md) first. This reference implements one
-enterprise reliability pattern: durable admission of slow work, repeatable delivery,
-and one committed result. We designed it as a résumé review aid and verify it using synthetic documents.
+A reviewer fills in a résumé and weighted requirements, then clicks **Analyze evidence**.
+The browser receives a job receipt while processing continues in the background. It reads
+the saved state until it can show a score and the source quotes supporting it.
+
+We designed each handoff to preserve accepted work and prevent duplicate results.
+[The scenario and vocabulary](design.md) describe the requirements and terms.
 
 ![Numbered local flow: React and Django admit a job and outbox in PostgreSQL; a relay publishes a UUID to RabbitMQ, a worker processes under a fenced lease, and React reads the result. Dotted telemetry goes to OpenObserve. Bedrock remains disabled.](assets/architecture.svg)
+
+The overview maps responsibilities: browser reads begin after acceptance and can
+overlap relay and worker processing.
 
 Solid numbered arrows carry business work. Dotted arrows carry diagnostic metadata
 or the explicitly disabled external-provider option. All local services start together
@@ -15,6 +21,11 @@ with `./scripts/lab up`; database and broker ports remain private to Compose.
 The synthetic sample mentions Python, Django and React. Their weights are 3, 3 and 2;
 PostgreSQL adds an unmatched weight of 2. Validated coverage is `(3 + 3 + 2) / 10 = 80%`.
 The score describes document evidence, not candidate quality.
+
+The overview’s **1–7** steps remain the reference throughout: **1 Submit · 2 Accept ·
+3 Relay · 4 Queue · 5 Process · 6 Save · 7 Read**. Labels such as `2.1` expand step 2.
+The phases group responsibilities: after acceptance, browser reads can overlap dispatch
+and processing; they do not wait for a worker push.
 
 ### 1. Admit the request
 
@@ -27,11 +38,11 @@ sequenceDiagram
   participant UI as React browser
   participant API as Django API
   participant DB as PostgreSQL
-  UI->>API: 1. POST /api/jobs/ through nginx
-  API->>API: 2. Session + CSRF + input checks
-  API->>DB: 3. One transaction: Job + OutboxEvent
+  UI->>API: 1.1 POST /api/jobs/ through nginx
+  API->>API: 2.1 Session + CSRF + input checks
+  API->>DB: 2.2 One transaction: Job + OutboxEvent
   DB-->>API: Commit succeeds
-  API-->>UI: 4. 202: durable job receipt
+  API-->>UI: 2.3 202: durable job receipt
 ```
 
 The transaction also checks owner-scoped idempotency and charges the daily quota once.
@@ -49,21 +60,21 @@ sequenceDiagram
   participant DB as PostgreSQL
   participant MQ as RabbitMQ
   participant Worker as Celery worker
-  Relay->>DB: 5. Lock an unsent outbox event
-  Relay->>MQ: 6. Publish persistent job UUID
+  Relay->>DB: 3.1 Lock an unsent outbox event
+  Relay->>MQ: 3.2 Publish persistent job UUID
   MQ-->>Relay: Publisher confirmation
-  Relay->>DB: Mark outbox sent
-  MQ->>Worker: 7. matching.process_job(job_id)
-  Worker->>DB: 8. Lock job, claim timed lease
+  Relay->>DB: 3.3 Mark outbox sent
+  MQ->>Worker: 4.1 matching.process_job(job_id)
+  Worker->>DB: 5.1 Lock job, claim timed lease
   DB-->>Worker: Stored text + requirements + lease
-  Note over Worker: 9. Extract evidence<br/>Validate source quotes
-  Worker->>DB: 10. Fence lease, score, commit result
+  Note over Worker: 5.2 Extract evidence<br/>Validate source quotes
+  Worker->>DB: 6.1 Fence lease, score, commit result
 ```
 
 Extraction runs outside the claim transaction. Completion locks the job again and checks
 its current, unexpired lease token before saving one result and clearing temporary text.
 Delivery and provider calls may repeat; the result relationship is unique per job.
-A worker can consume the confirmed message before the relay commits its sent marker;
+Worker delivery can begin before the relay handles confirmation or commits its sent marker;
 the sequence shows responsibilities, not a cross-process ordering guarantee.
 
 ### 3. Read and render the result
@@ -77,12 +88,12 @@ sequenceDiagram
   participant API as Django API
   participant DB as PostgreSQL
   loop While queued/running, one request at a time
-    UI->>API: 11. GET /api/jobs/
-    API->>DB: 12. Current owner's jobs + related Match
+    UI->>API: 7.1 GET /api/jobs/
+    API->>DB: 7.2 Current owner's jobs + related Match
     DB-->>API: Durable status, attempts, optional report
-    API-->>UI: 13. JSON jobs with nested match
+    API-->>UI: 7.3 JSON jobs with nested match
   end
-  Note over UI,API: 14. MatchResult renders<br/>score and source quotes
+  Note over UI,API: 7.4 MatchResult renders<br/>score and source quotes
 ```
 
 Polling starts after a one-second delay, with a ten-second deadline per request. It stops

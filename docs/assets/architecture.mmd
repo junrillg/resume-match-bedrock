@@ -10,8 +10,8 @@ flowchart TB
   end
   subgraph Processing["Deliver and process · Docker Compose"]
     direction RL
-    Q["4 Queue · RabbitMQ<br/>Persistent UUID; redelivery"] --> W["5 Process · Celery worker<br/>Lease; demo extract → validate → score"]
-    W --> Result["6 Save · same PostgreSQL<br/>Fenced finish; one result/job"]
+    Q["4 Queue · RabbitMQ<br/>Persistent UUID; redelivery"] --> W["5 Process · Celery worker<br/>Lease; extract → validate evidence"]
+    W --> Result["6 Save · same PostgreSQL<br/>Fenced score + unique result"]
   end
   Relay --> Q
   Result --> Read["7 Read · React polls Django GET<br/>Owner-scoped status + report"]

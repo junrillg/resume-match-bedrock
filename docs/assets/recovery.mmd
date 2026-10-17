@@ -19,8 +19,8 @@ sequenceDiagram
   R->>D: Mark dispatch sent
   Q->>W: UUID delivery can repeat
   W->>D: Short locked claim + lease token
-  Note over W: Extract + validate + score<br/>Outside transaction
-  W->>D: Current token? Commit one result + terminal state
+  Note over W: Extract + validate<br/>Outside transaction
+  W->>D: Current token? Score + one result + terminal state
   W-->>Q: Acknowledge completion
   U->>A: GET job status
   A->>D: Owner-scoped read
