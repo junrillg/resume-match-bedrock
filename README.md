@@ -4,14 +4,15 @@ A Django + React architecture lab for parsing résumés and reviewing transparen
 weighted skill coverage. AWS Bedrock proposes quoted evidence; application code
 validates the quotes and calculates the score. The default demo stays entirely local.
 
-![React to Django, bounded parsing, optional Bedrock extraction, evidence validation, deterministic scoring and owner-scoped storage.](docs/assets/architecture.svg)
+![Numbered Docker flow: React and Django commit jobs/outbox in PostgreSQL; RabbitMQ and a leased worker deliver one validated result; OpenObserve searches safe lifecycle events.](docs/assets/architecture.svg)
 
 ## Understand and rebuild
 
-Start with [the scenario and numbered flow](docs/design.md), follow [the architectural
-decisions](docs/decisions/0001-durable-background-work.md), then use [the ordered rebuild
-guide](docs/implementation-guide.md). [Research and current contracts](docs/research.md)
-explain the sources behind those choices. The UI tracks durable job progress, and the
+Start with [the scenario and vocabulary](docs/design.md), trace [the shipped architecture](docs/architecture.md),
+read [the decisions](docs/decisions/0001-durable-background-work.md), then use
+[the independent rebuild guide](docs/implementation-guide.md). [Research](docs/research.md)
+explains the contracts; [learning resources](docs/learning-resources.md) provide optional
+LinkedIn Learning and public video/tutorial support. The UI tracks durable job progress, and the
 local log viewer traces one request across API, relay and worker.
 
 ## Run locally
@@ -42,7 +43,8 @@ synthetic data and Django debug enabled, not an internet deployment.
 
 Open <http://127.0.0.1:5080>, sign in with the log-viewer login shown by
 `./scripts/lab credentials` in your private terminal, and select the `resume_match` log
-stream in the `default` organization. Copy the request ID from a comparison and search:
+stream in the `default` organization. Choose a time range that includes the submission
+(for example Past 1 Hour), enable SQL mode, copy its request ID and search:
 
 ```sql
 SELECT * FROM "resume_match"
@@ -59,7 +61,10 @@ Completion events include elapsed time; failures add an error code.
 Export uses a 256-record queue, batches of 32, a one-second schedule and a 0.5-second HTTP
 timeout. It never flushes or waits in the business path. Events can be lost when the queue
 fills, the viewer is unavailable or a process exits; this is not a durable audit ledger.
-Viewer failure does not prevent jobs from completing.
+Viewer failure does not prevent jobs from completing. For the synthetic outage drill,
+run `docker compose stop openobserve`, submit a comparison, verify completion, then
+restore the viewer with `docker compose start openobserve`.
+[See the verified cross-service search](docs/assets/log-search.png).
 
 OpenObserve OSS v1.1.1 is pinned by digest, with a static HTTP health probe added to its
 distroless image. It runs nonroot with a 1 GiB container limit, 64/16 MiB memtable/in-memory
@@ -127,7 +132,8 @@ npm run build
 
 Verified locally: 62 backend tests pass on Compose PostgreSQL, including concurrent
 idempotent admission, duplicate workers and deletion/completion fencing. The existing
-15 frontend tests pass and TypeScript/Vite build passes inside the production image.
+15 frontend tests pass; the TypeScript/Vite production build also succeeds in Docker.
+Three startup-helper tests pass.
 The Compose smoke check covers nginx, session cookies, CSRF rejection, login, an 80% match,
 saved history and deletion. All seven service health checks pass, including OpenObserve.
 Real-broker experiments confirm queued work while the worker is paused, HTTP 202 during
@@ -165,10 +171,11 @@ never fall back to a demo score.
 | --- | --- |
 | `backend/matching/services.py` | File parsing, extraction prompt, Bedrock boundary, evidence validation and score formula |
 | `backend/matching/views.py` | Session API, validation, quotas and owner-scoped result access |
-| `backend/matching/models.py` | Results and request counters |
+| `backend/matching/models.py` | Jobs, outbox, unique results and quota counters |
 | `backend/matching/jobs.py` | Fenced worker claims, finite retries, outbox relay and recovery |
 | `backend/matching/test_jobs.py` | Durable job state and PostgreSQL concurrency tests |
 | `backend/matching/tests.py` | Backend behavior and provider contract tests |
+| `backend/matching/telemetry.py` / `backend/matching/test_telemetry.py` | Allowlisted events, bounded export and privacy/outage regressions |
 | `frontend/src/` | React forms, authenticated requests, score evidence and history |
 | `docs/assets/architecture.mmd` | Editable implementation diagram |
 

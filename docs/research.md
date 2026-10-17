@@ -23,6 +23,11 @@ which contracts the local implementation actually demonstrates.
 | Does log ingestion need another collector? | [OpenObserve OTLP API](https://openobserve.ai/docs/reference/api/ingestion/logs/otlp/) | Direct OTLP HTTP log export can keep this local teaching stack small. |
 | Can telemetry block the application? | [OpenTelemetry Python exporters](https://opentelemetry.io/docs/languages/python/exporters/) and [tagged batch processor](https://github.com/open-telemetry/opentelemetry-python/blob/v1.45.1/opentelemetry-sdk/src/opentelemetry/sdk/_shared_internal/__init__.py) | Bounded background batching, exporter-level timeout, no request-path flush; logs are best effort rather than an audit ledger. |
 
+Additional pinned-version operational contracts:
+
+- [OpenObserve v1.1.1 configuration](https://github.com/openobserve/openobserve/blob/v1.1.1/src/config/src/config.rs): three-day retention is the minimum positive setting; its scheduled deletion is not immediate. The free-disk circuit breaker is not a volume byte quota. Memory and cache limits are explicit in Compose.
+- [nginx upstream resolve](https://nginx.org/en/docs/http/ngx_http_upstream_module.html#resolve): dynamic upstream resolution is available in the pinned OSS version. A shared zone and Docker DNS resolver let the existing web container follow a recreated API's changed address; this was exercised locally.
+
 ## Alternatives considered
 
 A synchronous request is simpler, but ties model latency/retry to an HTTP worker.

@@ -1,88 +1,129 @@
-# Evidence before scoring
+# Trace one résumé comparison
 
-> Upgrade status: the durable jobs API/relay/worker are verified. See
-> [the current design and decisions](design.md) for that asynchronous flow. The diagram
-> below documents the initial synchronous path, retained temporarily for the old UI;
-> job-aware UI, observability and replacement diagrams follow in separate milestones.
+Read [the scenario and vocabulary](design.md) first. This reference implements one
+enterprise reliability pattern: durable admission of slow work, repeatable delivery,
+and one committed result. It is a fictional reviewer aid using synthetic documents.
 
+![Numbered local flow: React and Django admit a job and outbox in PostgreSQL; a relay publishes a UUID to RabbitMQ, a worker processes under a fenced lease, and React reads the result. Dotted telemetry goes to OpenObserve. Bedrock remains disabled.](assets/architecture.svg)
 
-This fictional recruiting workbench demonstrates a trust boundary: an AI provider can
-propose résumé evidence, but application code validates it and calculates the score.
-It is an architecture lab with enterprise-oriented controls, not a production hiring platform.
+Solid numbered arrows carry business work. Dotted arrows carry diagnostic metadata
+or the explicitly disabled external-provider option. All local services start together
+with `./scripts/lab up`; database and broker ports remain private to Compose.
 
-![Architecture: React sends bounded input to an authenticated Django API; validated demo or Bedrock evidence is scored and stored per owner.](assets/architecture.svg)
+## Walk the successful input
 
-![Conceptual illustration: documents pass through a sieve and selected evidence is weighed. This is a nonliteral analogy.](assets/evidence-concept.png)
+The fictional sample mentions Python, Django and React. Requirements assign weights
+3, 3, 2 and 2 to those skills and PostgreSQL. Application code counts 8 matched weight
+out of 10: 80%. This measures literal evidence coverage, not candidate quality,
+competence or a hiring recommendation.
 
-The illustration is a nonliteral analogy: evidence is filtered before weights are counted.
+| Step | What happens and why | Source / check |
+| --- | --- | --- |
+| 1 | React sends session cookies, CSRF and a UUID idempotency key. Ambiguous retries retain the key for the same payload. | [App](../frontend/src/App.tsx), [API helper](../frontend/src/api.ts), [UI regressions](../frontend/src/App.test.tsx) |
+| 2 | Django authenticates, bounds input, normalizes selectable PDF/TXT text, then commits Job + Outbox together. `202` means accepted. | [jobs view](../backend/matching/views.py), [models](../backend/matching/models.py), [admission tests](../backend/matching/test_jobs.py) |
+| 3–4 | The relay publishes a persistent UUID-only message to the declared durable queue. It marks sent after publisher confirmation. | [relay_once / publish_job](../backend/matching/jobs.py), [relay command](../backend/matching/management/commands/relay_jobs.py) |
+| 5 | A worker locks briefly to claim a 90-second lease. Extraction occurs outside that transaction; the token fences completion. | [claim_job / run_job](../backend/matching/jobs.py), [task configuration](../backend/config/celery.py) |
+| 6 | The validator rejects invented evidence and partial-word tricks. The server computes the score. Current-token completion saves one result and clears temporary source text atomically. | [services](../backend/matching/services.py), [finish_job](../backend/matching/jobs.py), [boundary tests](../backend/matching/tests.py) |
+| 7 | Owner-scoped GET shows queued/running/succeeded/failed and the report. Polling is non-overlapping, bounded per request, paused on errors and stopped at terminal state. | [job API](../backend/matching/views.py), [React lifecycle tests](../frontend/src/App.test.tsx) |
 
-## One execution
+PostgreSQL is the business ledger. RabbitMQ delivers repeatable wakeups. A publisher
+confirmation proves broker acceptance under its configured durability semantics; it
+does not prove worker completion. The job/result rows establish completion.
 
-A reviewer signs in, supplies a synthetic résumé, and defines weighted job requirements.
-Django validates the request before extraction. The default demo runs locally; the
-Bedrock path uses a separate system instruction and treats the submitted document as
-untrusted data. The provider cannot supply weights or the final score. A strict result
-validator rejects unknown skills and evidence absent from the source. The server computes
-`100 × matched requirement weight / total requirement weight`, stores an owner-scoped
-result, and returns the score with quotes and gaps. React renders quotes as text.
+## Failure and recovery
 
-## Decisions and limits
+![Sequence: Django commits a job and outbox while RabbitMQ is unavailable; the relay later publishes it, a worker commits a result, and React reads completion.](assets/recovery.svg)
 
-- Explicit, reviewer-controlled requirements keep the denominator inspectable. This is
-  not automatic job-description interpretation. Weights can still encode human bias.
-- Quoted skill mentions provide provenance, not proof of competence, years of experience,
-  positive context, or suitability. Negations and instruction-like text can contain real
-  skill names. Human review remains necessary; prompt separation is not an injection guarantee.
-- Bedrock is opt-in. A timeout, access error, truncated response, or invalid extraction
-  fails the request; it must never silently become a successful demo result.
-- Local SQLite keeps the slice runnable. Session authentication, CSRF, owner-scoped
-  access, bounded requests and provider budgets are implemented controls. SSO,
-  organizational tenancy/RBAC, PostgreSQL operations, asynchronous queues, malware
-  scanning, distributed quotas, retention automation, HA and operational alerting are
-  production follow-up work, not boxes in the implemented diagram.
-- Source documents are not deliberately persisted. Evidence quotes are persisted and
-  can still contain personal data. Local database files are ignored by Git. Use synthetic
-  records here; deletion removes a result, not backups or operator logs.
+- **Broker down:** admission remains possible while PostgreSQL is available. Unsent
+  outbox intent survives. If confirmation or its database update is uncertain,
+  publication can repeat.
+- **Duplicate or interrupted worker:** a short locked claim and token-fenced completion
+  protect effects. The relay reconciles expired leases and stale queued wakeups.
+- **Transient extraction failure:** at most three claims, 2/4-second retry backoff and a
+  ten-minute job deadline. Permanent invalid evidence fails safely. No demo fallback.
+- **Stale completion or deletion:** an old lease cannot overwrite a newer attempt;
+  deletion and completion lock the same job. A unique job/result relationship prevents
+  duplicate committed reports. Provider calls can still repeat or incur repeated charges.
+- **Browser/network error:** same-payload manual retry retains its key. Changed inputs
+  use a new key. The server rejects a conflicting payload under an existing key.
+- **Log viewer down:** bounded background telemetry can lose events; business state
+  remains in PostgreSQL. Stdout is a fallback, not a durable audit ledger.
 
-## Failure boundary
+```mermaid
+stateDiagram-v2
+  [*] --> queued: job + outbox commit
+  queued --> running: locked lease claim
+  running --> succeeded: validated evidence + fenced commit
+  running --> queued: retryable failure / expired lease
+  queued --> failed: deadline / exhausted budget
+  running --> failed: invalid evidence / deadline / exhausted budget
+  succeeded --> [*]
+  failed --> [*]
+```
 
-An unauthenticated request is rejected. CSRF applies to login and mutations. A result
-belongs to its creator; another user cannot list or delete it. Bad file types, empty
-extraction, oversized input and invalid requirements stop before a model call. Per-user
-attempt limits bound provider use; credentials stay in the AWS SDK credential chain.
-The application must not log résumé bodies, credentials or raw provider exceptions.
-Request IDs connect safe client errors with operational events.
+Real broker/worker pause and restart experiments verified durable delivery and eventual
+single-result completion. PostgreSQL concurrency tests cover duplicate claims, fenced
+completion and deletion races. Expired leases and exhaustion are tested; a mid-provider
+process kill has not been measured as a live cloud experiment.
 
-## Bedrock operations
+## Data, AI and authorization boundaries
 
-Before enabling real calls, choose an approved AWS account/profile, region and supported
-Converse model or inference profile; review IAM, cost and data handling. The necessary
-inference permission is `bedrock:InvokeModel`; an inference profile may require access
-to its underlying regional models. Scope permissions to the chosen resources. Never
-use wildcard administrative access as a setup shortcut.
+Only bounded, selectable text is parsed; no OCR or DOCX. PDF normalization remains in
+the API; evidence extraction is the worker responsibility. Queue messages contain only
+the job UUID. Temporary source text stays in PostgreSQL until terminal state or deletion;
+evidence excerpts remain until report deletion. Backups may retain old rows.
 
-Bedrock model invocation logging is account/region configuration and can capture full
-requests/responses to CloudWatch or S3 when enabled. Review that setting and retention
-before using personal documents. No real AWS invocation was authorized for this lab.
-Mocked adapter tests establish request and failure behavior, not live model access,
-model quality, fairness or accuracy.
+The default provider is a local literal extractor. The Bedrock adapter has mocked SDK
+tests; no AWS credentials are mounted and no calls are authorized. System instructions
+are separated from document data, but that alone is not an injection guarantee. Quotes
+must appear in the source and contain a bounded skill mention; negation, truth and
+positive experience still require human judgment.
 
-## Sources
+Sessions identify reviewers; owner-scoped queries protect jobs/results. CSRF protects
+browser mutations including login. This is account isolation, not organization tenancy.
+The UI clears drafts, files and private state on logout/authentication loss and rejects
+stale responses. See [ADR 0002](decisions/0002-evidence-and-data-boundaries.md).
 
-Official sources accessed 2026-10-17. Installed dependency versions are pinned in the
-backend lockfile and frontend package lock; these docs describe the relevant API families.
+## Follow the operational path
 
-| Source | Version / decision |
+API, relay and worker export fixed lifecycle metadata to OpenObserve through bounded
+OpenTelemetry background batches. Correlate using the request/job IDs shown in the UI.
+See [ADR 0004](decisions/0004-searchable-observability.md) and the README's exact search
+and verification evidence. Lifecycle logs exclude document text, quotes, prompts, provider payloads,
+filenames, usernames, credentials, cookies, headers and raw exceptions.
+
+| Safe field | Operational question |
 | --- | --- |
-| [Django release support](https://www.djangoproject.com/download/) | Django 5.2 LTS line; use a supported patched release available from the registry. |
-| [Django CSRF](https://docs.djangoproject.com/en/5.2/howto/csrf/) | Bootstrap a CSRF token, send it on same-origin requests, and test with CSRF enforcement. |
-| [Django deployment checklist](https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/) | Local development is distinct from hardened production deployment. |
-| [Boto3 Converse](https://docs.aws.amazon.com/boto3/latest/reference/services/bedrock-runtime/client/converse.html) | Separate system instructions, bounded inference configuration, validate response content and stop reason. |
-| [Botocore Config](https://docs.aws.amazon.com/botocore/latest/reference/config.html) | Explicit connection/read timeouts and total attempt bound. |
-| [Boto3 retries](https://docs.aws.amazon.com/boto3/latest/guide/retries.html) | `total_max_attempts` includes the initial attempt. |
-| [Bedrock invocation logging](https://docs.aws.amazon.com/bedrock/latest/userguide/model-invocation-logging.html) | Account logging can retain request and response content. |
-| [pypdf text extraction](https://pypdf.readthedocs.io/en/stable/user/extract-text.html) | Text PDFs only; compressed size alone does not bound decompressed processing. |
-| [React versions](https://react.dev/versions) | React 19 browser interface; no server components needed. |
+| timestamp | When was this event observed? Cross-process arrival order can differ. |
+| service_name / event | Which process reached which lifecycle boundary? |
+| request_id / job_id | Which submission connects these events and database state? |
+| status | Is work queued, running, terminal or awaiting publication? |
+| attempt | Is this the first claim or a bounded retry? |
+| duration_ms | How long did the measured processing boundary take? |
+| error_code | Which safe failure category should be investigated? |
 
-The score formula and evidence validator are design choices. The local demo is a learning
-simplification, not research evidence of model performance.
+Not every event has every field. These are logs, not a distributed trace or a metrics
+dashboard. Job IDs are useful search fields; they are unsuitable as one metric label
+per job. Best-effort diagnostics do not replace the persisted attempt/deadline ledger.
+
+![OpenObserve search returns eight safe lifecycle events for a synthetic success and controlled failure across API, relay and worker.](assets/log-search.png)
+
+## What a broader deployment would add
+
+![Proposed deployment only: protected ingress, organization identity, managed database and broker, isolated workers, approved Bedrock and central operations. None are provisioned here.](assets/enterprise-context.svg)
+
+This separate diagram is a design discussion. Production work includes SSO/RBAC and
+tenant policy; TLS/network protections; malware scanning; capacity and availability
+targets; backups and restore drills; retention/deletion across backups; alerts; provider
+spend limits; model/fairness evaluation and legal review for the intended use. No
+throughput, SLA or production readiness is certified.
+
+Kafka is omitted because there are no independent replay consumers or retained stream
+requirements. Redis is omitted because no cache bottleneck or separate result backend
+is needed. More boxes would not strengthen this flow's stated guarantees.
+
+![Nonliteral analogy: documents pass through a sieve, then selected evidence is weighed.](assets/evidence-concept.png)
+
+The illustration explains validation before scoring; it is not infrastructure. Continue
+with [the rebuild guide](implementation-guide.md), [ADRs](decisions/0001-durable-background-work.md)
+and [research](research.md).

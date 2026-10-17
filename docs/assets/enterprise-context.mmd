@@ -1,0 +1,15 @@
+flowchart LR
+  accTitle: Proposed production context, separate from the local lab
+  accDescr: Every component is proposed, not deployed. A production design adds identity, protected ingress, managed durable infrastructure, operational retention and evaluation around the same application boundaries.
+  subgraph Proposed["Proposed enterprise deployment · NOT provisioned or verified"]
+    U["Reviewer"] --> I["TLS ingress / rate controls"] --> A["API + tenant authorization"]
+    S["Organization identity / SSO"] --> A
+    A --> D[("Managed PostgreSQL\nBackups + restore drills")]
+    D --> R["Outbox relay"] --> Q["Durable broker\nHA / capacity plan"] --> W["Isolated workers\nResource + concurrency limits"]
+    W --> D
+    W --> B["Approved Bedrock\nIAM + spend + data policy"]
+    W -. "Safe diagnostics" .-> O["Central observability\nAlerts + access + retention"]
+    A -. "Safe diagnostics" .-> O
+  end
+  classDef proposed fill:#f1f1ef,stroke:#6b7280,stroke-dasharray:5 5;
+  class U,I,S,A,D,R,Q,W,B,O proposed;

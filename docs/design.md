@@ -46,8 +46,9 @@ and were not authorized for this run. No automatic hiring decision is made.
 7. React polls the owner-scoped job endpoint; the result appears when processing finishes.
 8. Safe structured lifecycle events let the reviewer find the request/job in OpenObserve.
 
-The observability step is planned until its own implementation milestone is verified.
-The definitive shipped flow and evidence are maintained in [architecture.md](architecture.md).
+The observability path is verified with real success/failure ingestion, viewer-outage
+processing and an isolated fresh-stack run. The shipped flow and evidence are maintained
+in [architecture.md](architecture.md).
 
 ## Where failure changes the flow
 
@@ -78,8 +79,10 @@ own operational design. See the [data and AI decision](decisions/0002-evidence-a
 The initial synchronous baseline already exists; its history is preserved. The Docker
 foundation is verified in commit `6dbaf577e0e2a9188fe40c66f0e3f2e529a4e037`.
 The queue milestone is verified in commit `4456c3214871f46ee47e84f6add9f98dcf54f2d5`.
+The job-aware UI is verified in commit `44b0d1e` (15 frontend tests and real queued-to-result UI check).
+Searchable logs and runtime recovery are verified in commit `a79e75e702431878b684b5b2f7aa719a5eacab2c`.
 This design package records the researched
-choices before the remaining UI and observability implementation, without backdating it.
+choices before the remaining UI and observability implementation at that point in history, without backdating it.
 
 | Milestone | Components | Observable check |
 | --- | --- | --- |

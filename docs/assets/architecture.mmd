@@ -1,16 +1,24 @@
-flowchart LR
-  U["React review workbench<br/>Synthetic résumé + weighted requirements"]
-  A["Django API<br/>Session auth · CSRF · owner scope"]
-  P["Bounded parser<br/>PDF / UTF-8 TXT / pasted text"]
-  D["Local demo<br/>Literal evidence extraction"]
-  B["AWS Bedrock Converse<br/>Opt-in external boundary"]
-  V["Validate evidence<br/>Schema + source quote + skill mention"]
-  S["Deterministic score<br/>Matched weight / total weight"]
-  DB[("SQLite local<br/>Owner-scoped results + quota counters")]
-  U --> A --> P
-  P -->|default| D
-  P -.->|explicit configuration| B
-  D --> V
-  B -.-> V
-  V --> S --> DB
-  S -->|Score + evidence| U
+flowchart TB
+  accTitle: Runnable local résumé comparison in three stages
+  accDescr: Admission commits Job and Outbox in PostgreSQL. Delivery uses a relay, durable RabbitMQ and a leased Celery worker. Completion writes the same database and React polls Django. Dotted arrows export safe metadata; the disabled Bedrock option is separate.
+  subgraph Admission["A · Admit durable work · Docker Compose"]
+    direction LR
+    UI["React + nginx<br/>127.0.0.1:8088"] -->|"1. Session, CSRF<br/>idempotency key"| API["Django API<br/>Bounded PDF/TXT parsing"]
+    API -->|"2. One transaction"| DB[("PostgreSQL<br/>Job + Outbox")]
+  end
+  subgraph Processing["B · Deliver and process · Docker Compose"]
+    direction LR
+    Relay["Relay<br/>Publish + reconcile"] -->|"4. Persistent UUID<br/>publisher confirm"| Q["RabbitMQ<br/>Durable queue"]
+    Q -->|"5. Repeatable delivery"| W["Celery worker<br/>Lease → demo extract<br/>validate → score"]
+  end
+  subgraph Completion["C · Commit and review · same database and API"]
+    direction LR
+    Result[("PostgreSQL · same DB<br/>One result + terminal job<br/>Clear temporary source")] -->|"7. Owner-scoped read"| Read["Django GET job"] --> Report["React status + report"]
+  end
+  Admission -->|"3. Committed unsent intent"| Processing
+  Processing -->|"6. Current lease token + unique result"| Completion
+  Admission -. "API metadata" .-> O["OpenObserve OSS<br/>127.0.0.1:5080"]
+  Processing -. "Relay + worker metadata<br/>Batched OTLP logs" .-> O
+  Processing -. "Future explicit configuration only" .-> B["AWS Bedrock Converse<br/>Disabled · no live verification"]
+  classDef optional fill:#f1f1ef,stroke:#6b7280,stroke-dasharray:5 5;
+  class B optional;

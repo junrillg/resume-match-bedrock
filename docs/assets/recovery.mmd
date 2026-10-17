@@ -1,0 +1,27 @@
+sequenceDiagram
+  accTitle: Admission and recovery when the broker is unavailable
+  accDescr: The API accepts committed work while RabbitMQ is down. The relay retries unsent dispatch. Publication may repeat after an uncertain confirmation, so workers use database claims and unique result writes.
+  participant U as React
+  participant A as Django
+  participant D as PostgreSQL
+  participant R as Relay
+  participant Q as RabbitMQ
+  participant W as Worker
+  U->>A: POST job + idempotency key
+  A->>D: Atomic Job + Outbox
+  D-->>A: Commit
+  A-->>U: 202 queued + IDs
+  R->>D: Read unsent dispatch
+  R--xQ: Publish fails: broker down
+  Note over D,R: Intent stays unsent<br/>Job remains queued
+  R->>Q: Retry after broker returns
+  Q-->>R: Publisher confirm
+  R->>D: Mark dispatch sent
+  Q->>W: UUID delivery can repeat
+  W->>D: Short locked claim + lease token
+  Note over W: Extract + validate + score<br/>Outside transaction
+  W->>D: Current token? Commit one result + terminal state
+  W-->>Q: Acknowledge completion
+  U->>A: GET job status
+  A->>D: Owner-scoped read
+  A-->>U: succeeded + evidence report

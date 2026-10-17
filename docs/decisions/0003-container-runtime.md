@@ -22,5 +22,7 @@ one-node persistence and process separation, not multi-node availability or a cl
 deployment. SQLite remains only an optional fast unit-test path; lock/concurrency
 acceptance runs on PostgreSQL. Verify clean startup, migration, API/CSRF through nginx,
 restart persistence, and the documented helper without exposing secret values.
+A forced API address change also verified nginx dynamic DNS recovery without restarting
+the web container; see [the upstream contract](https://nginx.org/en/docs/http/ngx_http_upstream_module.html#resolve).
 [Compose readiness](https://docs.docker.com/compose/how-tos/startup-order/),
 [Django deployment checklist](https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/).
