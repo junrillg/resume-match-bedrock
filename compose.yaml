@@ -1,0 +1,102 @@
+name: resume-match-bedrock
+
+x-backend: &backend
+  image: resume-match-api:local
+  build:
+    context: .
+    dockerfile: backend/Dockerfile
+  environment: &backend-environment
+    DJANGO_DEBUG: "true"
+    DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?Run ./scripts/lab up first}
+    DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1,api
+    DJANGO_CSRF_TRUSTED_ORIGINS: http://localhost:8088,http://127.0.0.1:8088
+    MATCH_PROVIDER: demo
+    POSTGRES_HOST: db
+    POSTGRES_DB: ${POSTGRES_DB:?Run ./scripts/lab up first}
+    POSTGRES_USER: ${POSTGRES_USER:?Run ./scripts/lab up first}
+    POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Run ./scripts/lab up first}
+    LAB_DEMO_PASSWORD: ${LAB_DEMO_PASSWORD:?Run ./scripts/lab up first}
+  init: true
+  read_only: true
+  tmpfs:
+    - /tmp:mode=1777
+  security_opt:
+    - no-new-privileges:true
+  cap_drop: [ALL]
+
+services:
+  db:
+    image: postgres:17.11-alpine3.24
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?Run ./scripts/lab up first}
+      POSTGRES_USER: ${POSTGRES_USER:?Run ./scripts/lab up first}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Run ./scripts/lab up first}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  broker:
+    image: rabbitmq:4.3.6-alpine
+    hostname: broker
+    environment:
+      RABBITMQ_DEFAULT_USER: lab
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?Run ./scripts/lab up first}
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: [CMD, rabbitmq-diagnostics, -q, ping]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  migrate:
+    <<: *backend
+    command: [python, manage.py, migrate, --noinput]
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    <<: *backend
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/session/', timeout=3)"]
+      interval: 5s
+      timeout: 4s
+      retries: 12
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    ports:
+      - 127.0.0.1:8088:8080
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, wget, -q, --spider, http://127.0.0.1:8080/]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    read_only: true
+    tmpfs:
+      - /tmp:mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  rabbitmq-data:

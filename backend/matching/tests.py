@@ -8,6 +8,7 @@ from botocore.exceptions import ReadTimeoutError
 from botocore.stub import Stubber
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.core.management import call_command, CommandError
 from django.test import Client, SimpleTestCase, TestCase, override_settings
 from pypdf import PdfWriter
 from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
@@ -241,3 +242,35 @@ class APITests(TestCase):
         self.assertEqual(response.status_code, 413)
         self.assertEqual(self.client.get("/api/login/").status_code, 405)
         self.assertEqual(self.client.post("/api/session/").status_code, 405)
+
+
+@override_settings(DEBUG=True, MATCH_PROVIDER="demo")
+class LabAccountTests(TestCase):
+    @patch.dict("os.environ", {"LAB_DEMO_PASSWORD": "fictional-random-demo-password-123"})
+    def test_create_once_without_printing_or_resetting_password(self):
+        output = io.StringIO()
+        call_command("ensure_lab_user", stdout=output)
+        user = get_user_model().objects.get(username="lab")
+        self.assertTrue(user.check_password("fictional-random-demo-password-123"))
+        original_hash = user.password
+        with patch.dict("os.environ", {"LAB_DEMO_PASSWORD": "another-fictional-password-456"}):
+            call_command("ensure_lab_user", stdout=output)
+        user.refresh_from_db()
+        self.assertEqual(user.password, original_hash)
+        self.assertNotIn("password", output.getvalue())
+        self.assertFalse(user.is_staff or user.is_superuser)
+
+    def test_reject_missing_or_short_password(self):
+        with patch.dict("os.environ", {"LAB_DEMO_PASSWORD": "short"}), self.assertRaises(CommandError):
+            call_command("ensure_lab_user")
+        self.assertEqual(get_user_model().objects.count(), 0)
+
+    @override_settings(DEBUG=False)
+    def test_reject_non_debug_execution(self):
+        with self.assertRaises(CommandError):
+            call_command("ensure_lab_user")
+
+    @override_settings(MATCH_PROVIDER="bedrock")
+    def test_reject_live_provider(self):
+        with self.assertRaises(CommandError):
+            call_command("ensure_lab_user")

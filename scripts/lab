@@ -1,0 +1,63 @@
+#!/bin/sh
+set -eu
+
+usage() {
+  cat <<'EOF'
+Purpose: Run the complete local, synthetic-data lab with Docker Compose.
+Usage: ./scripts/lab up|down|status|logs|test|credentials|help
+  up           Build and start services; create private local secrets once and seed lab login.
+  down         Stop this lab; preserve database and broker volumes.
+  status       Show service health.
+  logs         Follow the latest service logs (Ctrl-C stops following).
+  test         Run the backend tests against the container database engine.
+  credentials  Print the synthetic local login; run this yourself, not in shared logs.
+  help|-h|--help  Show usage without checking Docker or touching files.
+Requires: Docker with Compose; openssl for first startup. No cloud calls.
+Examples: ./scripts/lab help; ./scripts/lab up; ./scripts/lab status; ./scripts/lab down
+EOF
+}
+
+action=$(printf '%s' "${1:-help}" | tr '[:upper:]' '[:lower:]')
+case "$action" in
+  help|-h|--help) usage; exit 0 ;;
+  up|down|status|logs|test|credentials) ;;
+  *) usage >&2; exit 2 ;;
+esac
+[ "$#" -eq 1 ] || { usage >&2; exit 2; }
+cd "$(CDPATH= cd "$(dirname "$0")/.." && pwd)"
+command -v docker >/dev/null 2>&1 || { echo 'Docker is required.' >&2; exit 1; }
+docker info --format '{{.ServerVersion}}' >/dev/null
+
+if [ "$action" = up ] && [ ! -e .env ]; then
+  command -v openssl >/dev/null 2>&1 || { echo 'Install openssl before the first startup.' >&2; exit 1; }
+  umask 077
+  pending=$(mktemp .env.init.XXXXXX)
+  trap 'rm -f "$pending"' EXIT HUP INT TERM
+  {
+    printf 'POSTGRES_DB=resume_match\nPOSTGRES_USER=lab\n'
+    for key in POSTGRES_PASSWORD RABBITMQ_PASSWORD DJANGO_SECRET_KEY LAB_DEMO_PASSWORD; do
+      value=$(openssl rand -hex 32)
+      printf '%s=%s\n' "$key" "$value"
+    done
+  } > "$pending"
+  ln "$pending" .env || { echo 'Local environment changed; retry up.' >&2; exit 1; }
+  rm "$pending"
+  trap - EXIT HUP INT TERM
+fi
+
+case "$action" in
+  up)
+    docker compose config --quiet
+    COMPOSE_PARALLEL_LIMIT=1 docker compose build
+    docker compose up -d --wait --wait-timeout 180
+    docker compose exec -T api python manage.py ensure_lab_user
+    printf 'Lab ready: http://127.0.0.1:8088/\nRun ./scripts/lab credentials privately for the local login.\n'
+    ;;
+  down) docker compose down ;;
+  status) docker compose ps ;;
+  logs) docker compose logs --tail=100 --follow ;;
+  test) docker compose exec -T api python manage.py test matching ;;
+  credentials)
+    docker compose exec -T api python -c 'import os; print("Username: lab\nPassword: " + os.environ["LAB_DEMO_PASSWORD"])'
+    ;;
+esac
