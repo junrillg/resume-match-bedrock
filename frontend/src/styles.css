@@ -102,6 +102,17 @@ input[type=radio] { accent-color: var(--teal); margin: 0; width: 15px; height: 1
 .file-area .help { margin: 12px 0 0; }
 input[type=file] { background: white; font-size: 12px; }
 .result-anchor { scroll-margin-top: 20px; }
+.job-panel { margin-top: 26px; border-top: 3px solid var(--teal); }
+.job-panel .section-heading { margin-bottom: 18px; }
+.job-panel .tag { text-transform: capitalize; }
+.job-message { color: #42594a; font-size: 13px; line-height: 1.8; }
+.job-failed { border-top-color: #953e32; }
+.status-failed { color: #81371e; background: #fff1e9; border-color: #dbb59c; }
+.trace-ids { margin: 20px 0 0; padding-top: 16px; border-top: 1px solid var(--line); }
+.trace-ids > div { display: flex; gap: 12px; margin-bottom: 6px; font-size: 10px; }
+.trace-ids dt { color: var(--muted); min-width: 60px; }
+.trace-ids dd { margin: 0; font-family: ui-monospace, monospace; overflow-wrap: anywhere; }
+.retry-note { color: #81371e; background: #fff1e9; border: 1px solid #dbb59c; padding: 12px; font-size: 12px; line-height: 1.7; border-radius: 3px; }
 .result { margin-top: 26px; }
 .result .section-heading { margin-bottom: 22px; }
 .tag { font-size: 10px; white-space: nowrap; color: var(--teal); background: #edf2e9; border: 1px solid #c7d7c5; border-radius: 3px; padding: 4px 8px; }

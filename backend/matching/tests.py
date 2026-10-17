@@ -1,5 +1,6 @@
 import io
 import json
+import uuid
 from decimal import Decimal
 from unittest.mock import patch
 
@@ -13,7 +14,8 @@ from django.test import Client, SimpleTestCase, TestCase, override_settings
 from pypdf import PdfWriter
 from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 
-from .models import Match, RateBucket
+from .models import Job, Match, RateBucket
+from .jobs import run_job
 from .services import (InvalidInput, ProviderError, bedrock_request, calculate_score,
                        extract_evidence, read_requirements, read_resume, validate_evidence)
 
@@ -170,6 +172,9 @@ class APITests(TestCase):
     def form(self, **extra):
         return {"job_title": "Fictional platform role", "resume_text": "Built Python APIs.", "requirements": '[{"skill":"Python","weight":3},{"skill":"Django","weight":2}]', **extra}
 
+    def post_job(self, **extra):
+        return self.client.post("/api/jobs/", self.form(**extra), HTTP_IDEMPOTENCY_KEY=str(uuid.uuid4()))
+
     def test_auth_is_required(self):
         self.assertEqual(self.client.get("/api/matches/").status_code, 401)
         self.assertEqual(self.client.post("/api/matches/", self.form()).status_code, 401)
@@ -182,15 +187,16 @@ class APITests(TestCase):
         response = client.post("/api/login/", data=json.dumps({"username": "alice", "password": "Fictional-testing-password-2026!"}), content_type="application/json", HTTP_X_CSRFTOKEN=session["csrfToken"])
         self.assertTrue(response.json()["authenticated"])
         token = response.json()["csrfToken"]
-        self.assertEqual(client.post("/api/matches/", self.form()).status_code, 403)
-        self.assertEqual(client.post("/api/matches/", self.form(), HTTP_X_CSRFTOKEN=token).status_code, 201)
+        self.assertEqual(client.post("/api/jobs/", self.form(), HTTP_IDEMPOTENCY_KEY=str(uuid.uuid4())).status_code, 403)
+        self.assertEqual(client.post("/api/jobs/", self.form(), HTTP_X_CSRFTOKEN=token, HTTP_IDEMPOTENCY_KEY=str(uuid.uuid4())).status_code, 202)
         self.assertFalse(client.post("/api/logout/", HTTP_X_CSRFTOKEN=token).json()["authenticated"])
 
     def test_create_and_owner_isolation_and_delete(self):
         self.client.force_login(self.alice)
-        response = self.client.post("/api/matches/", self.form())
-        self.assertEqual(response.status_code, 201)
-        record = response.json()
+        response = self.post_job()
+        self.assertEqual(response.status_code, 202)
+        run_job(response.json()["id"])
+        record = self.client.get(f'/api/jobs/{response.json()["id"]}/').json()["match"]
         self.assertEqual(record["score"], 60)
         self.assertEqual(record["provider"], "demo")
         self.assertEqual(record["request_id"], response["X-Request-ID"])
@@ -207,30 +213,56 @@ class APITests(TestCase):
 
     def test_txt_upload_and_invalid_forms(self):
         self.client.force_login(self.alice)
-        self.assertEqual(self.client.post("/api/matches/", self.form(resume_text="", resume=SimpleUploadedFile("r.txt", b"Built Python APIs"))).status_code, 201)
+        self.assertEqual(self.post_job(resume_text="", resume=SimpleUploadedFile("r.txt", b"Built Python APIs")).status_code, 202)
+        self.assertEqual(Job.objects.get().resume_text, "Built Python APIs")
         for changes in [{"job_title": ""}, {"requirements": "bad"}, {"resume_text": "x" * 30_001}, {"surprise": "value"}]:
             with self.subTest(changes=changes):
-                response = self.client.post("/api/matches/", self.form(**changes))
+                response = self.post_job(**changes)
                 self.assertEqual(response.status_code, 400)
                 self.assertEqual(set(response.json()), {"error", "request_id"})
 
     @override_settings(MATCH_DAILY_LIMIT=1)
     def test_quota_survives_deleting_results_and_is_per_user(self):
         self.client.force_login(self.alice)
-        record = self.client.post("/api/matches/", self.form()).json()
-        self.client.delete(f'/api/matches/{record["id"]}/')
-        self.assertEqual(self.client.post("/api/matches/", self.form()).status_code, 429)
+        job = self.post_job().json()
+        run_job(job["id"])
+        record = Match.objects.get(job_id=job["id"])
+        self.client.delete(f'/api/matches/{record.id}/')
+        self.assertEqual(self.post_job().status_code, 429)
         self.client.force_login(self.bob)
-        self.assertEqual(self.client.post("/api/matches/", self.form()).status_code, 201)
+        self.assertEqual(self.post_job().status_code, 202)
 
-    def test_provider_failure_never_saves_and_hides_details(self):
+    def test_provider_failure_saves_no_result_and_hides_details(self):
         self.client.force_login(self.alice)
-        with patch("matching.views.extract_evidence", side_effect=ProviderError("SECRET-EXCEPTION")):
-            response = self.client.post("/api/matches/", self.form())
-        self.assertEqual(response.status_code, 502)
+        admitted = self.post_job()
+        self.assertEqual(admitted.status_code, 202)
+        with patch("matching.jobs.extract_evidence", side_effect=ProviderError("SECRET-EXCEPTION")):
+            run_job(admitted.json()["id"])
+        response = self.client.get(f'/api/jobs/{admitted.json()["id"]}/')
+        self.assertEqual(response.json()["status"], "failed")
+        self.assertEqual(response.json()["error_code"], "invalid_evidence")
+        self.assertIsNone(response.json()["match"])
         self.assertNotIn("SECRET", response.content.decode())
+        self.assertEqual(Job.objects.get().resume_text, "")
         self.assertEqual(Match.objects.count(), 0)
         self.assertEqual(RateBucket.objects.get(key__startswith="match:").count, 1)
+
+    def test_synchronous_creation_is_disabled(self):
+        self.client.force_login(self.alice)
+        with patch("matching.jobs.extract_evidence") as provider:
+            response = self.client.post("/api/matches/", self.form())
+        self.assertEqual(response.status_code, 405)
+        self.assertEqual((Job.objects.count(), Match.objects.count()), (0, 0))
+        provider.assert_not_called()
+
+    def test_legacy_match_delete_remains_owner_scoped(self):
+        legacy = Match.objects.create(owner=self.alice, job_title="Legacy fictional role", score=60, provider="demo", requirements=[], request_id=uuid.uuid4())
+        self.client.force_login(self.bob)
+        self.assertEqual(self.client.delete(f"/api/matches/{legacy.id}/").status_code, 404)
+        self.assertTrue(Match.objects.filter(pk=legacy.id).exists())
+        self.client.force_login(self.alice)
+        self.assertEqual(self.client.delete(f"/api/matches/{legacy.id}/").status_code, 200)
+        self.assertFalse(Match.objects.filter(pk=legacy.id).exists())
 
     def test_login_rate_limit(self):
         for _ in range(10):

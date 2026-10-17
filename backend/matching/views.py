@@ -14,7 +14,7 @@ from django.middleware.csrf import get_token
 from django.utils import timezone
 
 from .models import Job, Match, OutboxEvent, RateBucket
-from .services import InvalidInput, ProviderError, calculate_score, extract_evidence, read_requirements, read_resume
+from .services import InvalidInput, read_requirements, read_resume
 
 
 def error(request, message, status):
@@ -106,22 +106,7 @@ def matches(request):
         return error(request, "Sign in to continue.", 401)
     if request.method == "GET":
         return JsonResponse({"matches": [serialize(record) for record in Match.objects.filter(owner=request.user)[:100]]})
-    if request.method != "POST":
-        return error(request, "Method not allowed.", 405)
-    try:
-        title, requirements, text = read_match_form(request)
-    except (InvalidInput, RequestDataTooBig, TooManyFieldsSent, TooManyFilesSent) as exc:
-        message = str(exc) if isinstance(exc, InvalidInput) else "Request body exceeds upload limits."
-        return error(request, message, 400)
-    now = timezone.now()
-    if not consume_bucket(f"match:{request.user.pk}:{now.date()}", settings.MATCH_DAILY_LIMIT, now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)):
-        return error(request, "Daily matching limit reached. Try again tomorrow (UTC).", 429)
-    try:
-        evidence = extract_evidence(text, requirements)
-    except ProviderError:
-        return error(request, "Evidence provider unavailable or returned invalid evidence. No result was saved.", 502)
-    record = Match.objects.create(owner=request.user, job_title=title, score=calculate_score(evidence), provider=settings.MATCH_PROVIDER, requirements=evidence, request_id=request.request_id)
-    return JsonResponse(serialize(record), status=201)
+    return error(request, "Method not allowed. Submit new comparisons through /api/jobs/.", 405)
 
 
 def match_detail(request, match_id):

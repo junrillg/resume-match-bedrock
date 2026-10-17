@@ -9,9 +9,9 @@ describe('same-origin API boundary', () => {
     vi.stubGlobal('fetch', fetcher);
     const body = new FormData();
     body.set('resume_text', 'Fictional Python experience.');
-    await api('matches/', { method: 'POST', body }, 'rotated-token');
+    await api('jobs/', { method: 'POST', body }, 'rotated-token');
     const [url, options] = fetcher.mock.calls[0];
-    expect(url).toBe('/api/matches/');
+    expect(url).toBe('/api/jobs/');
     expect(options.credentials).toBe('same-origin');
     expect(options.headers.get('X-CSRFToken')).toBe('rotated-token');
     expect(options.headers.has('Content-Type')).toBe(false);
@@ -23,7 +23,7 @@ describe('same-origin API boundary', () => {
     vi.stubGlobal('fetch', fetcher);
     await expect(api('logout/', { method: 'POST' })).rejects.toBeInstanceOf(ApiError);
     expect(fetcher).not.toHaveBeenCalled();
-    await expect(api('matches/', { method: 'POST' }, 'csrf')).rejects.toMatchObject({ message: 'Daily limit reached.', status: 429, requestId: 'trace-123' });
+    await expect(api('jobs/', { method: 'POST' }, 'csrf')).rejects.toMatchObject({ message: 'Daily limit reached.', status: 429, requestId: 'trace-123' });
   });
 
   it('handles successful deletion and unreachable or non-JSON backends', async () => {
@@ -31,7 +31,7 @@ describe('same-origin API boundary', () => {
       .mockRejectedValueOnce(new TypeError('Network failed'))
       .mockResolvedValueOnce(new Response('<html>Bad gateway</html>', { status: 502 }));
     vi.stubGlobal('fetch', fetcher);
-    await expect(api('matches/id/', { method: 'DELETE' }, 'csrf')).resolves.toBeUndefined();
+    await expect(api('jobs/id/', { method: 'DELETE' }, 'csrf')).resolves.toBeUndefined();
     await expect(api('session/')).rejects.toMatchObject({ status: 0 });
     await expect(api('session/')).rejects.toMatchObject({ status: 502 });
   });

@@ -49,7 +49,7 @@ class JobAPITests(TestCase):
 
     def test_accepts_without_running_provider_and_replays_without_charging_quota(self):
         key = uuid.uuid4()
-        with patch("matching.views.extract_evidence") as provider:
+        with patch("matching.jobs.extract_evidence") as provider:
             first = self.post(key)
             second = self.post(key)
         self.assertEqual((first.status_code, second.status_code), (202, 202))

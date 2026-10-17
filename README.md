@@ -27,8 +27,9 @@ builds the images, waits for PostgreSQL and RabbitMQ health, runs migrations, an
 Gunicorn behind nginx serving the React production build. It creates the synthetic `lab`
 account once. Use `./scripts/lab credentials` in your own terminal to view its password.
 Only port 8088 is exposed, on loopback; PostgreSQL and RabbitMQ stay on the Compose network.
-AWS remains disabled. A separate Celery worker processes the asynchronous jobs API;
-the current UI still uses the synchronous compatibility endpoint until its next milestone.
+AWS remains disabled. The UI submits durable jobs for a separate Celery worker to process,
+then polls their state. New comparisons are accepted only through the jobs API;
+the matches API retains read/delete access to existing reports.
 
 `./scripts/lab down` stops containers while retaining database and broker volumes. Your
 existing development SQLite database is separate and untouched. Keep `.env` with the named
@@ -36,38 +37,12 @@ volumes: regenerating its passwords does not change passwords already initialize
 Use `./scripts/lab help` for commands. The stack is a local HTTP learning environment with
 synthetic data and Django debug enabled, not an internet deployment.
 
-### Run development servers without Docker
-
-Prerequisites: Python 3.12+, [uv](https://docs.astral.sh/uv/), Node.js 22.12+ and npm.
-From the repository root:
-
-```sh
-cd backend
-uv sync --frozen
-uv run python manage.py migrate
-uv run python manage.py createsuperuser
-uv run python manage.py runserver 127.0.0.1:8000 --noreload
-```
-
-In a second terminal, from the repository root:
-
-```sh
-cd frontend
-npm ci
-npm run dev -- --host 127.0.0.1
-```
-
-Open <http://127.0.0.1:5173>, sign in with the account you created, load the synthetic
-sample, and run a match. Vite proxies `/api` to Django; cookies and CSRF remain same-origin.
-No development account or password ships with the application. These development servers bind to
-loopback and are not production servers.
-
 ## What you can review
 
 - Paste a résumé or upload a selectable-text PDF / UTF-8 TXT file up to 1 MiB.
 - Define explicit weighted requirements and inspect evidence for each skill.
 - Review the score, missing mentions, and your latest 100 saved results; delete a result.
-- Switch explicitly from the labeled local demo to the Bedrock adapter after setup.
+- Inspect the Bedrock adapter and mocked failure tests; live AWS activation is deferred.
 
 The score measures weighted **literal evidence coverage**, not candidate quality or a
 hiring recommendation. It does not infer skill aliases or validate competence,
@@ -100,21 +75,22 @@ historical database backups; use synthetic data in this lab.
 ## Verify
 
 ```sh
-cd backend
-uv run python manage.py test matching
-uv run python manage.py check
-uv run python manage.py makemigrations --check --dry-run
+./scripts/lab test
+docker compose exec -T api python manage.py check
+docker compose exec -T api python manage.py makemigrations --check --dry-run
 ```
 
-From the repository root in another terminal:
+Optional frontend unit/build checks require local Node.js 22.12+ and npm. These do not
+replace running the complete Compose stack:
 
 ```sh
 cd frontend
+npm ci
 npm test
 npm run build
 ```
 
-Verified locally: 51 backend tests pass on Compose PostgreSQL, including concurrent
+Verified locally: 53 backend tests pass on Compose PostgreSQL, including concurrent
 idempotent admission, duplicate workers and deletion/completion fencing. The existing
 6 frontend tests pass and TypeScript/Vite build passes inside the production image.
 The Compose smoke check covers nginx, session cookies, CSRF rejection, login, an 80% match,
@@ -130,24 +106,18 @@ validation, and mocked provider failures. They do not establish live Bedrock acc
 model accuracy. See [the architecture case study](docs/architecture.md) for decisions,
 failure behavior, current official sources and production limits.
 
-## Enable Bedrock deliberately
+## Bedrock integration boundary
 
-AWS is disabled by default. When you have chosen an approved account, region, model
-and spend limit, use your AWS SDK credential chain (for example an authenticated
-`AWS_PROFILE`) and restart Django with these variables set:
+Compose deliberately runs the local demo and mounts no AWS credentials. The Bedrock
+adapter is implemented and tested with mocked SDK responses; live account access and
+model behavior remain unverified.
 
-```sh
-export MATCH_PROVIDER=bedrock
-export AWS_REGION=YOUR_APPROVED_REGION
-export BEDROCK_MODEL_ID=YOUR_SUPPORTED_CONVERSE_MODEL_OR_INFERENCE_PROFILE
-uv run python manage.py runserver 127.0.0.1:8000 --noreload
-```
-
-This command runs from `backend/`. Credentials never belong in browser code, Git or
-command arguments. The caller needs resource-scoped `bedrock:InvokeModel` permission.
-The adapter has bounded timeouts, one total attempt and a token limit. Provider failures
-return safe errors; they never fall back to a demo score. Model support, IAM, cross-region
-inference and invocation logging must be reviewed in your own account before real calls.
+A later authorized integration needs an approved account, region, Converse model and spend
+limit, server-side worker credentials, matching API/worker provider configuration, and
+resource-scoped `bedrock:InvokeModel` permission. Review model support, cross-region
+inference and invocation logging first. Credentials never belong in browser code, Git or
+command arguments. The adapter bounds timeouts, attempts and tokens; provider failures
+never fall back to a demo score.
 
 ## Code map
 
