@@ -27,9 +27,10 @@ limits, not measured industry capacity targets. The account quota is 20 logical 
 per UTC day. Work has a finite deadline and attempt budget. The caller owns its jobs
 and reports. This is user isolation, not a complete organization/tenant authorization model.
 
-The default external-provider substitute is deterministic and local; it lets the real
-queue/worker/database flow run without AWS credentials. Real Bedrock calls remain opt-in
-and were not authorized for this run. No automatic hiring decision is made.
+The local provider supplies deterministic evidence. The next delivery adds a separate
+HTTP Converse contract service and an AWS Terraform deployment, preserving the same
+business boundaries. Local execution and AWS deployment evidence are reported separately.
+No automatic hiring decision is made.
 
 ## Intended flow
 
@@ -95,3 +96,20 @@ choices before the remaining UI and observability implementation at that point i
 Each implementation milestone includes its boundary checks before its real commit/push.
 See [research sources](research.md), [the architecture](architecture.md), then the
 [implementation reference](implementation-guide.md).
+
+## AWS delivery sequence
+
+The [AWS service decision](decisions/0005-aws-service-journey.md) records the researched
+topology, alternatives, local counterpart and deployment limits before implementation.
+
+| Milestone | Scope | Observable acceptance |
+| --- | --- | --- |
+| Design | AWS service responsibilities, local parity and ordered delivery | Reviewed decision and plan committed first. |
+| Local/provider and transport | Separate HTTP Converse service, SDK endpoint, quorum queue, cloud TLS/proxy configuration, Impeccable UI clarification | Real Compose request returns a report through the HTTP provider; relevant boundary tests and UI/build checks pass. |
+| Deployment | Terraform network, ingress, ECS roles/tasks, RDS, MQ, model access, secrets and logs; bootstrap/runbook | Format/init/schema and credential-free mocked plan assertions pass; no real AWS deployment claimed. |
+| Architecture communication | Official-icon service views, parity crosswalk, operating evidence and service-by-service overview | Endpoint → durable work → provider → report can be followed without opening implementation files. |
+
+Each implementation milestone is verified and committed before the next. Existing
+runtime evidence is reused only where source/configuration and the guarantee remain
+unchanged. The model contract service, managed-service TLS and deployment wiring need
+new evidence. Three-zone AWS resilience is a deployment requirement, not a local result.
