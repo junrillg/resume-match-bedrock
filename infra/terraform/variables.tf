@@ -138,3 +138,13 @@ variable "alarm_action_arns" {
     error_message = "Optional alarm destinations must be existing authorized SNS topic ARNs."
   }
 }
+
+variable "document_retention_days" {
+  description = "Project policy for originals and derived application data; lifecycle is a delayed backstop, not the access-control clock."
+  type        = number
+  default     = 90
+  validation {
+    condition     = var.document_retention_days >= 1 && var.document_retention_days <= 3650 && floor(var.document_retention_days) == var.document_retention_days
+    error_message = "Choose an integer retention of 1–3650 days, matching application policy."
+  }
+}

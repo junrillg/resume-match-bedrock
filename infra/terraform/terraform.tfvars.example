@@ -8,6 +8,9 @@ postgres_engine_version = "17.11"
 bedrock_model_id         = "example.model-v1:0"
 bedrock_resource_arns    = ["arn:aws:bedrock:us-east-1::foundation-model/example.model-v1:0"]
 
+# Project retention policy; application expiry runs before eventual S3 lifecycle cleanup.
+document_retention_days = 90
+
 # Phase 1: foundation only. No placeholder task definition or image is deployed.
 image_digests       = null
 bootstrap_completed = false

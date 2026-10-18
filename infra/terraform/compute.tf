@@ -21,6 +21,10 @@ locals {
     AWS_REGION                  = var.region
     BEDROCK_MODEL_ID            = var.bedrock_model_id
     AWS_EC2_METADATA_DISABLED   = "true"
+    DOCUMENT_BUCKET             = aws_s3_bucket.originals.id
+    DOCUMENT_REGION             = var.region
+    DOCUMENT_SCAN_MODE          = "guardduty"
+    DOCUMENT_RETENTION_DAYS     = tostring(var.document_retention_days)
   }
   secret_environment = {
     DJANGO_SECRET_KEY = aws_secretsmanager_secret.app["django"].arn
@@ -92,7 +96,7 @@ resource "aws_ecs_task_definition" "service" {
     }
   }
   container_definitions = jsonencode(concat([local.api_containers[each.key]], each.key == "app" ? [local.web_container] : []))
-  depends_on            = [aws_iam_role_policy.execution, aws_secretsmanager_secret_version.app]
+  depends_on            = [aws_iam_role_policy.execution, aws_secretsmanager_secret_version.app, aws_iam_role_policy.documents, aws_guardduty_malware_protection_plan.originals]
 }
 resource "aws_ecs_service" "main" {
   for_each                           = local.services
@@ -122,6 +126,12 @@ resource "aws_ecs_service" "main" {
       target_group_arn = aws_lb_target_group.app.arn
       container_name   = "web"
       container_port   = 8080
+    }
+  }
+  lifecycle {
+    precondition {
+      condition     = !var.enable_services || aws_guardduty_malware_protection_plan.originals.status == "ACTIVE"
+      error_message = "Do not enable admission or processing until document malware protection reports ACTIVE."
     }
   }
   depends_on = [aws_lb_listener.https, aws_vpc_endpoint.service, aws_vpc_endpoint.bedrock, aws_vpc_endpoint.s3_layers, aws_iam_role_policy.bedrock]

@@ -186,10 +186,13 @@ resource "aws_vpc_endpoint" "s3_layers" {
   service_name      = "com.amazonaws.${var.region}.s3"
   vpc_endpoint_type = "Gateway"
   route_table_ids   = [aws_route_table.private.id]
-  policy = jsonencode({ Version = "2012-10-17", Statement = [{
-    Effect   = "Allow", Principal = "*", Action = ["s3:GetObject"],
+  policy = jsonencode({ Version = "2012-10-17", Statement = concat([{
+    Sid      = "ECRImageLayers", Effect = "Allow", Principal = "*", Action = ["s3:GetObject"],
     Resource = ["arn:aws:s3:::prod-${var.region}-starport-layer-bucket/*"]
-  }] })
+    }], [for role, actions in local.document_access : {
+    Sid    = "Document${title(role)}", Effect = "Allow", Principal = { AWS = aws_iam_role.task[role].arn },
+    Action = actions, Resource = [local.document_arn]
+  }]) })
 }
 resource "aws_vpc_security_group_egress_rule" "s3_layers" {
   for_each          = local.roles

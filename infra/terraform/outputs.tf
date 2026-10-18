@@ -29,3 +29,10 @@ output "reviewer_secret_arn" {
 output "log_groups" {
   value = { for role, group in aws_cloudwatch_log_group.service : role => group.name }
 }
+
+output "document_bucket" {
+  value = aws_s3_bucket.originals.id
+}
+output "document_scan_plan" {
+  value = { arn = aws_guardduty_malware_protection_plan.originals.arn, status = aws_guardduty_malware_protection_plan.originals.status }
+}
