@@ -10,7 +10,7 @@ Usage: ./scripts/lab up|down|status|logs|test|credentials|help
   status       Show service health.
   logs         Follow the latest service logs (Ctrl-C stops following).
   test         Run the backend tests against the container database engine.
-  credentials  Print the synthetic app/log-viewer logins; run privately, not in shared logs.
+  credentials  Print the synthetic app and viewer logins; run privately, not in shared logs.
   help|-h|--help  Show usage without checking Docker or touching files.
 Requires: Docker with Compose; openssl for first startup/environment upgrades. No cloud calls.
 Examples: ./scripts/lab help; ./scripts/lab up; ./scripts/lab status; ./scripts/lab down
@@ -37,7 +37,7 @@ if [ "$action" = up ]; then
     chmod 600 .env
   fi
   needs_upgrade=false
-  for key in OPENOBSERVE_PASSWORD OBJECT_ADMIN_ACCESS_KEY OBJECT_ADMIN_SECRET_KEY OBJECT_API_ACCESS_KEY OBJECT_API_SECRET_KEY OBJECT_WORKER_ACCESS_KEY OBJECT_WORKER_SECRET_KEY OBJECT_RELAY_ACCESS_KEY OBJECT_RELAY_SECRET_KEY; do
+  for key in OPENOBSERVE_PASSWORD OBJECT_ADMIN_ACCESS_KEY OBJECT_ADMIN_SECRET_KEY OBJECT_API_ACCESS_KEY OBJECT_API_SECRET_KEY OBJECT_WORKER_ACCESS_KEY OBJECT_WORKER_SECRET_KEY OBJECT_RELAY_ACCESS_KEY OBJECT_RELAY_SECRET_KEY FLOWER_PASSWORD FLOWER_BROKER_PASSWORD RABBITMQ_VIEWER_PASSWORD POSTGRES_VIEWER_PASSWORD PGADMIN_PASSWORD STORAGE_VIEWER_PASSWORD STORAGE_ADMIN_PASSWORD; do
     if [ ! -e .env ] || ! grep -q "^$key=" .env; then needs_upgrade=true; fi
   done
   if [ "$needs_upgrade" = true ]; then
@@ -63,7 +63,7 @@ if [ "$action" = up ]; then
       value=$(openssl rand -hex 32)
       printf 'OPENOBSERVE_PASSWORD=Aa1!%s\n' "$value" >> "$pending"
     fi
-    for key in OBJECT_ADMIN_ACCESS_KEY OBJECT_ADMIN_SECRET_KEY OBJECT_API_ACCESS_KEY OBJECT_API_SECRET_KEY OBJECT_WORKER_ACCESS_KEY OBJECT_WORKER_SECRET_KEY OBJECT_RELAY_ACCESS_KEY OBJECT_RELAY_SECRET_KEY; do
+    for key in OBJECT_ADMIN_ACCESS_KEY OBJECT_ADMIN_SECRET_KEY OBJECT_API_ACCESS_KEY OBJECT_API_SECRET_KEY OBJECT_WORKER_ACCESS_KEY OBJECT_WORKER_SECRET_KEY OBJECT_RELAY_ACCESS_KEY OBJECT_RELAY_SECRET_KEY FLOWER_PASSWORD FLOWER_BROKER_PASSWORD RABBITMQ_VIEWER_PASSWORD POSTGRES_VIEWER_PASSWORD PGADMIN_PASSWORD STORAGE_VIEWER_PASSWORD STORAGE_ADMIN_PASSWORD; do
       if ! grep -q "^$key=" "$pending"; then
         value=$(openssl rand -hex 32)
         printf '%s=%s\n' "$key" "$value" >> "$pending"
@@ -86,13 +86,24 @@ case "$action" in
     COMPOSE_PARALLEL_LIMIT=1 docker compose build
     docker compose up -d --wait --wait-timeout 900
     docker compose exec -T api python manage.py ensure_lab_user
-    printf 'Lab ready: http://127.0.0.1:8088/\nLogs: http://127.0.0.1:5080/\nRun ./scripts/lab credentials privately for the local logins.\n'
+    printf 'Lab ready: http://127.0.0.1:8088/\nLogs: http://127.0.0.1:5080/\nBroker: http://127.0.0.1:15672/\nTasks: http://127.0.0.1:5555/tasks\nDatabase: http://127.0.0.1:5050/\nObjects: http://127.0.0.1:23646/files?path=/buckets/resume-originals\nScanner: docker compose exec scanner clamdtop\nRun ./scripts/lab credentials privately for the local logins.\n'
     ;;
   down) docker compose down ;;
   status) docker compose ps ;;
   logs) docker compose logs --tail=100 --follow ;;
   test) docker compose exec -T api python manage.py test matching ;;
   credentials)
-    docker compose exec -T api python -c 'import os; print("App username: lab\nApp password: " + os.environ["LAB_DEMO_PASSWORD"] + "\nLog viewer email: lab@example.invalid\nLog viewer password: " + os.environ["OPENOBSERVE_PASSWORD"])'
+    [ -f .env ] && [ ! -L .env ] || { echo 'Run ./scripts/lab up first.' >&2; exit 1; }
+    awk -F= '
+      BEGIN {
+        labels["LAB_DEMO_PASSWORD"]="App username: lab\nApp password: "
+        labels["OPENOBSERVE_PASSWORD"]="Log viewer email: lab@example.invalid\nLog viewer password: "
+        labels["RABBITMQ_VIEWER_PASSWORD"]="Broker username: lab_monitor\nBroker password: "
+        labels["FLOWER_PASSWORD"]="Tasks username: viewer\nTasks password: "
+        labels["PGADMIN_PASSWORD"]="Database GUI email: lab@example.invalid\nDatabase GUI password: "
+        labels["STORAGE_VIEWER_PASSWORD"]="Storage username: viewer\nStorage password: "
+      }
+      $1 in labels { print labels[$1] substr($0, index($0, "=")+1) }
+    ' .env
     ;;
 esac

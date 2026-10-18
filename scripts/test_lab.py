@@ -51,6 +51,10 @@ class StartupBoundaryTests(unittest.TestCase):
             self.assertTrue(upgraded.startswith(original))
             self.assertEqual(upgraded.count("OPENOBSERVE_PASSWORD="), 1)
             self.assertRegex(upgraded, r"OPENOBSERVE_PASSWORD=Aa1![a-fA-F0-9]{64}")
+            for key in ("FLOWER_PASSWORD", "FLOWER_BROKER_PASSWORD", "RABBITMQ_VIEWER_PASSWORD",
+                        "POSTGRES_VIEWER_PASSWORD", "PGADMIN_PASSWORD", "STORAGE_VIEWER_PASSWORD",
+                        "STORAGE_ADMIN_PASSWORD"):
+                self.assertEqual(upgraded.count(key + "="), 1)
             self.assertEqual(state.stat().st_mode & 0o777, 0o600)
             self.assertNotIn("keep-synthetic-db-value", first.stdout + first.stderr)
             self.assertNotIn("0000000000000001", first.stdout + first.stderr)

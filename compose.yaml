@@ -109,18 +109,126 @@ services:
     restart: unless-stopped
 
   broker:
-    image: rabbitmq:4.3.6-alpine
+    image: rabbitmq:4.3.6-alpine@sha256:6931816af1a943f471c038b278835d36692d55dec769232739296bb91b7de0f5
     hostname: broker
     environment:
       RABBITMQ_DEFAULT_USER: lab
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?Run ./scripts/lab up first}
     volumes:
       - rabbitmq-data:/var/lib/rabbitmq
+      - ./viewing/enabled_plugins:/etc/rabbitmq/enabled_plugins:ro
+    ports:
+      - 127.0.0.1:15672:15672
     healthcheck:
       test: [CMD, rabbitmq-diagnostics, -q, ping]
       interval: 10s
       timeout: 5s
       retries: 12
+    restart: unless-stopped
+
+  viewer-init:
+    <<: *backend
+    command: [python, init_viewers.py]
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?Run ./scripts/lab up first}
+      POSTGRES_USER: ${POSTGRES_USER:?Run ./scripts/lab up first}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Run ./scripts/lab up first}
+      POSTGRES_VIEWER_PASSWORD: ${POSTGRES_VIEWER_PASSWORD:?Run ./scripts/lab up first}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?Run ./scripts/lab up first}
+      RABBITMQ_VIEWER_PASSWORD: ${RABBITMQ_VIEWER_PASSWORD:?Run ./scripts/lab up first}
+      FLOWER_BROKER_PASSWORD: ${FLOWER_BROKER_PASSWORD:?Run ./scripts/lab up first}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      broker:
+        condition: service_healthy
+    restart: "no"
+
+  flower:
+    image: mher/flower:2.2.0@sha256:b4d3a7b1ed1bba28a32d9ad3c039571c74fe35c2d0ddb9ef7a8d42a3ca38b1bb
+    command: [celery, --config=celeryconfig, flower, --conf=/etc/flower/flowerconfig.py]
+    environment:
+      PYTHONPATH: /etc/flower
+      FLOWER_PASSWORD: ${FLOWER_PASSWORD:?Run ./scripts/lab up first}
+      FLOWER_BROKER_PASSWORD: ${FLOWER_BROKER_PASSWORD:?Run ./scripts/lab up first}
+    ports:
+      - 127.0.0.1:5555:5555
+    volumes:
+      - ./viewing/celeryconfig.py:/etc/flower/celeryconfig.py:ro
+      - ./viewing/flowerconfig.py:/etc/flower/flowerconfig.py:ro
+    depends_on:
+      viewer-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5555/healthcheck', timeout=3)"]
+      interval: 5s
+      timeout: 4s
+      retries: 24
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    mem_limit: 256m
+    restart: unless-stopped
+
+  pgadmin:
+    image: dpage/pgadmin4:9.17@sha256:c332c5f6dfba995d9ebc4af261d93506d6876085d712eaaa3defc8dd1a3f26de
+    entrypoint: [/venv/bin/python3, /pgadmin-start.py]
+    environment:
+      PGADMIN_DEFAULT_EMAIL: lab@example.invalid
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:?Run ./scripts/lab up first}
+      PGADMIN_LISTEN_PORT: "5050"
+      PGADMIN_DISABLE_POSTFIX: "true"
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
+      PGADMIN_CONFIG_ALLOW_SPECIAL_EMAIL_DOMAINS: "['invalid']"
+      PGADMIN_SERVER_JSON_FILE: /tmp/servers.json
+      PGPASS_FILE: /tmp/pgpass
+      POSTGRES_DB: ${POSTGRES_DB:?Run ./scripts/lab up first}
+      POSTGRES_VIEWER_PASSWORD: ${POSTGRES_VIEWER_PASSWORD:?Run ./scripts/lab up first}
+    ports:
+      - 127.0.0.1:5050:5050
+    volumes:
+      - pgadmin-data:/var/lib/pgadmin
+      - ./viewing/pgadmin-start.py:/pgadmin-start.py:ro
+    depends_on:
+      viewer-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: [CMD, /venv/bin/python3, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5050/misc/ping', timeout=3)"]
+      interval: 5s
+      timeout: 4s
+      retries: 30
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 512m
+    restart: unless-stopped
+
+  storage-viewer:
+    image: chrislusf/seaweedfs:4.48@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d
+    command: [admin, -master=objectstore:9333, -dataDir=/data, -iceberg.port=0, -lance.port=0]
+    environment:
+      WEED_ADMIN_USER: operator
+      WEED_ADMIN_PASSWORD: ${STORAGE_ADMIN_PASSWORD:?Run ./scripts/lab up first}
+      WEED_ADMIN_READONLY_USER: viewer
+      WEED_ADMIN_READONLY_PASSWORD: ${STORAGE_VIEWER_PASSWORD:?Run ./scripts/lab up first}
+    ports:
+      - 127.0.0.1:23646:23646
+    volumes:
+      - storage-viewer-data:/data
+    depends_on:
+      objectstore:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, sh, -c, "wget -q -O /dev/null http://127.0.0.1:23646/login"]
+      interval: 5s
+      timeout: 4s
+      retries: 24
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    cap_add: [CHOWN, SETUID, SETGID]
+    mem_limit: 512m
     restart: unless-stopped
 
   migrate:
@@ -273,3 +381,5 @@ volumes:
   postgres-data:
   rabbitmq-data:
   openobserve-data:
+  pgadmin-data:
+  storage-viewer-data:
