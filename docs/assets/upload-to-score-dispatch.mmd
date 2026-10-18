@@ -1,0 +1,49 @@
+sequenceDiagram
+    autonumber
+    participant RelayLoop as relay_jobs.Command.handle
+    participant Relay as relay_once / publish_job
+    participant DB as PostgreSQL
+    participant MQ as RabbitMQ
+    participant Celery as Celery worker / tasks.process_job
+    participant Job as jobs.run_job / claim_job
+    loop Continuous relay loop, or one pass with --once
+        RelayLoop->>RelayLoop: close_old_connections()
+        RelayLoop->>Relay: relay_once(limit=100)
+        Relay->>Relay: reconcile_documents(limit), then recover_jobs(limit)
+        loop Up to limit due events
+            Relay->>DB: BEGIN, select_for_update(skip_locked=True)
+            Note over Relay,DB: Earliest created unsent OutboxEvent with available_at <= now, none ends loop
+            Relay->>Relay: publish_job(event.job_id)
+            Relay->>MQ: app.send_task(matching.process_job, args=[Job UUID])
+            Note over Relay,MQ: Durable direct exchange + quorum queue resume.match.quorum, JSON, delivery_mode=2, mandatory=True, retry=False, confirm_timeout=3
+            alt Publish/confirm failure
+                Relay->>DB: Keep sent_at NULL, commit and stop this batch
+                Relay->>Relay: on_commit emit(job.publish_failed)
+            else Broker confirms acceptance
+                MQ-->>Relay: Publisher confirmation
+                Relay->>DB: Set OutboxEvent.sent_at, COMMIT
+                Relay->>Relay: on_commit emit(job.published)
+                Note over Relay,MQ: Crash after broker confirmation but before SQL commit can publish again, confirmation does not mean scoring completed
+            end
+        end
+        Relay-->>RelayLoop: Number sent
+        RelayLoop->>RelayLoop: Touch heartbeat file, return for --once, otherwise sleep 2 seconds
+    end
+    Note over MQ,Celery: Delivery is concurrent with relay, it can occur before sent_at SQL commit, despite being drawn below the loop
+    MQ->>Celery: Deliver matching.process_job, application args contain only Job UUID
+    Note over Celery: Celery autodiscover_tasks registers shared_task, ignore_result=True, late acknowledgements configured
+    Celery->>Job: process_job(job_id) -> run_job(job_id)
+    Job->>Job: Validate UUID, claim_job(job_id)
+    Job->>DB: BEGIN, lock Job
+    alt Missing, not QUEUED, not due, deadline exceeded or attempts exhausted
+        Job->>DB: No claim, fail_job() for deadline/exhaustion when applicable
+        Job-->>Celery: Return without processing
+    else Claim accepted
+        Job->>DB: RUNNING, attempts + 1, new lease ID + 90-second lease, COMMIT
+        Job->>Job: emit(job.started), document_text() then extract_evidence() then finish_job()
+        Note over Job: Detailed retrieval, validation, score and failures are in the worker diagram
+        Job-->>Celery: Return after success or handled retry/failure
+    end
+    Celery-->>MQ: Normal task return permits late ACK
+    Note over Celery,MQ: Handled retries use database outbox, not self.retry(), unexpected outer exception emits job.interrupted. Lost worker deliveries and DB lease recovery may repeat wakeups
+    Note over RelayLoop,Celery: Heartbeat freshness proves the relay loop progressed, not that a particular publish or job succeeded

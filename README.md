@@ -54,6 +54,7 @@ permissions and observed behavior →](docs/implementation-guide.md#service-insp
 ## Engineering references
 
 - [Architecture](docs/architecture.md): request, storage, dispatch, processing and visible outcome.
+- [Upload-to-score Mermaid diagrams](docs/upload-to-score-mermaid.md): end-to-end flow, function links, retries and document lifecycle.
 - [Design and decisions](docs/design.md): requirements, alternatives and actual delivery boundaries.
 - [Implementation reference](docs/implementation-guide.md): source/API map, log search and verification.
 - [AWS deployment](infra/terraform/README.md): prerequisites, mocked checks, bootstrap and preservation.

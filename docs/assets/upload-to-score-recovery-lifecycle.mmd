@@ -1,0 +1,70 @@
+sequenceDiagram
+    autonumber
+    participant React as React poll / saved-source controls
+    participant View as Django views
+    participant DB as PostgreSQL
+    participant Worker as run_job / finish_job
+    participant Relay as relay_once / recovery helpers
+    participant Store as SeaweedFS or S3
+    par Browser polls independently of worker
+        loop While active jobs exist
+            React->>View: poll() -> api(): GET jobs/, matches/, documents/
+            View->>DB: Owner-scoped, lifecycle-filtered, bounded reads
+            DB-->>View: Job, Match, Document records
+            View-->>React: serialize_job(), serialize(), serialize_document()
+            React->>React: Render status or MatchResult, pollError stops polling until recovery action
+        end
+    and Worker handles a failure
+        alt ScanPending
+            Worker->>DB: Lock matching RUNNING lease, decrement attempt
+            Worker->>DB: enqueue_again(now + 8 seconds): queued + outbox, with normal base backoff added
+            Note over Worker,DB: With normal base 2 seconds and first-attempt scan wait, next availability is approximately 10 seconds later
+        else DocumentUnavailable, TransientProviderError or SoftTimeLimitExceeded
+            Worker->>DB: finish_job(transient=True), enqueue_again() if attempts remain
+            Note over Worker,DB: Default transient backoff 2 then 4 seconds, max attempts 3, overall deadline 600 seconds
+        else Terminal provider/document or unexpected processing error
+            Worker->>DB: finish_job() -> fail_job(): stable error code, FAILED, clear legacy text and lease
+        end
+    and Relay continuously reconciles durable state
+        Relay->>Relay: reconcile_documents() before recover_jobs()
+        Relay->>DB: recover_jobs(): lock due QUEUED/RUNNING candidates with skip_locked
+        alt Deadline exceeded or max attempts exhausted
+            Relay->>DB: fail_job(), persist failure
+        else RUNNING lease expired
+            Relay->>DB: enqueue_again(): QUEUED + new due OutboxEvent
+        else QUEUED wake_at reached
+            Relay->>DB: Ensure unsent outbox exists, advance wake_at
+        end
+        Note over Relay,DB: Wake interval default 30 seconds, queue/database are authoritative, repeat deliveries are permitted
+    end
+    opt User reuses an original
+        React->>View: analyze(): POST jobs/ with document_id and reprocess
+        View->>DB: Lock/check owner, PENDING/READY, expiry, create new job and outbox, no PUT
+        Note over Worker,Store: Worker still retrieves and safety-checks original. reprocess bypasses parser cache only
+    end
+    opt User downloads an original
+        React->>View: downloadOriginal() -> downloadDocument() -> document_download()
+        View->>DB: Require owner, READY and unexpired
+        View->>Store: get_original(): scan/integrity checks again
+        Store-->>View: Bytes, or mapped safety/storage error
+        View->>DB: Recheck READY and expiry after network I/O
+        View-->>React: FileResponse attachment, private no-store, nosniff
+    end
+    opt User deletes original, or retention/upload deadline expires
+        React->>View: deleteOriginal() -> api(DELETE documents/UUID/)
+        View->>DB: document_detail(): lock document, tombstone()
+        Note over View,DB: DELETING, clear private metadata/cache, delete associated jobs/reports, delete_after respects upload lease, HTTP 202
+        Relay->>DB: reconcile_documents(): also tombstone expired sources and stale UPLOADING reservations
+        Relay->>Store: delete_object() after delete_after
+        alt Delete unavailable
+            Relay->>Relay: emit(document.delete_pending), retry in later relay pass
+        else Delete accepted
+            Relay->>DB: Recheck status and lease, clear metadata, DELETED tombstone or retain REJECTED status
+            Note over Relay,DB: Rejected comparisons remain visible until policy expiry, late upload finalizers restore deletion intent instead of reviving source
+        end
+        Note over Relay,Store: Default source retention 90 days, upload TTL 1 hour, DELETED tombstone cleanup after 7 days, AWS bucket lifecycle is an additional policy
+    end
+    opt User deletes only a comparison
+        React->>View: deleteSelection() -> job_detail() or match_detail()
+        View->>DB: Delete selected history, original remains reusable unless separately deleted/expired
+    end
