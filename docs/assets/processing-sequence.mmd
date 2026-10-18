@@ -1,0 +1,25 @@
+sequenceDiagram
+  accTitle: Dispatch, source safety, evidence and fenced result
+  accDescr: Relay publishes a UUID, a leased worker fetches and checks the source and passes the safety gate before parsing/provider use. PostgreSQL fences the final report.
+  participant R as Relay
+  participant DB as PostgreSQL
+  participant Q as RabbitMQ
+  participant W as Worker
+  participant O as Object store
+  participant S as Safety gate
+  participant P as Converse<br/>provider
+  R->>DB: 3 Read outbox
+  R->>Q: 4 Publish job UUID
+  Q-->>R: Confirmed
+  R->>DB: Mark sent
+  Q->>W: UUID delivery
+  W->>DB: 5 Claim lease + document
+  W->>O: 5.1 GET source
+  O-->>W: Bytes
+  Note over W: Verify size/SHA
+  W->>S: 5.2 Safety check
+  S-->>W: Clean or fail closed
+  Note over W: 5.3 Parse or version cache
+  W->>P: 5.4 Source + skills + UUIDs
+  P-->>W: Proposed evidence
+  W->>DB: 6 Validate quotes + document/lease<br/>Score and save one report

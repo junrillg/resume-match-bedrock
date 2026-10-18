@@ -1,0 +1,16 @@
+sequenceDiagram
+  accTitle: Source admission across database and object storage
+  accDescr: Reserve identity in PostgreSQL, store exact source, then atomically finalize queued job and outbox. Concurrent replay may return uploading before storage finishes.
+  participant UI as React
+  participant API as Django
+  participant DB as PostgreSQL
+  participant O as Object store
+  UI->>API: 1 POST original + requirements<br/>Idempotency-Key
+  API->>DB: 2.1 Reserve document/job<br/>and upload lease
+  DB-->>API: Reservation committed
+  API->>O: 2.2 PUT exact original<br/>at generated key
+  O-->>API: Storage acknowledgment
+  API->>DB: 2.3 Pending document<br/>+ queued job + outbox
+  DB-->>API: Finalization committed
+  API-->>UI: 202 queued receipt
+  Note over UI,DB: Concurrent replay may return 202 uploading<br/>before PUT finishes. No outbox yet.

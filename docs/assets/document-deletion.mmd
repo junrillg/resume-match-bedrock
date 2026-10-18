@@ -1,0 +1,7 @@
+flowchart TB
+  A[Owner delete or expiry] --> B[Lock document; tombstone access]
+  B --> C[Remove derived content; fence related jobs]
+  C --> D[Relay retries object DELETE]
+  D -->|Failure| D
+  D -->|Confirmed after upload lease| E[Clear source metadata; mark deleted]
+  E --> F[Remove cleanup tombstone after seven days]

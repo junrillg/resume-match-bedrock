@@ -1,0 +1,11 @@
+sequenceDiagram
+  participant UI as React
+  participant API as Django
+  participant DB as PostgreSQL
+  loop Active work, one poll at a time
+    UI->>API: GET /api/jobs/
+    API->>DB: Owner-scoped job + document + optional report
+    DB-->>API: Durable state
+    API-->>UI: JSON
+  end
+  Note over UI: Render score/evidence or safe failure. Stop at terminal state
