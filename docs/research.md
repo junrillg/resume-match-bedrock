@@ -80,3 +80,35 @@ The earlier scope cleared source text after comparison. It did not establish an 
 Registry verification selected `chrislusf/seaweedfs:4.48@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d`. Its S3 API is a local counterpart; AWS IAM, KMS and managed durability remain separate cloud properties. Scanner pin, platform and runtime evidence are recorded with implementation. Object PUT and database commit are not atomic; [ADR 0006](decisions/0006-durable-document-lifecycle.md) defines recovery beyond the existing outbox.
 
 Cloud scanning uses [GuardDuty Malware Protection for S3](https://docs.aws.amazon.com/guardduty/latest/ug/how-malware-protection-for-s3-gdu-works.html) and its [tag-based access gate](https://docs.aws.amazon.com/guardduty/latest/ug/tag-based-access-s3-malware-protection.html), checked 2026-10-18. Only a clean scan result releases access; app roles cannot write scan tags. Local ClamAV is an executable role counterpart, not GuardDuty API parity. The verified local scanner image is `clamav/clamav:1.5.4@sha256:638d90201ee7ee6a82d249a2fc23b132e578673b5f1f2766852b127676ca1ef6` (GPL-2.0 engine; official image is AMD64, requiring emulation on the current ARM64 runtime). Real signature readiness, clean/infected scans and failure behavior require runtime evidence.
+
+## Connected service inspection review — 2026-10-18
+
+The [inspection decision](decisions/0007-service-inspection.md) adds operating
+visibility to the existing services. These are source and registry findings;
+container startup, authentication, permissions and populated interfaces still
+require the runtime milestone. Image availability alone is not integration evidence.
+
+| Boundary and selected release | Primary source | Decision supported |
+| --- | --- | --- |
+| RabbitMQ 4.3.6 | [Management plugin](https://www.rabbitmq.com/docs/management) and [monitoring](https://www.rabbitmq.com/docs/monitoring) | Enable the management plugin offline on the existing pinned alpine release; inspect queue ready/unacknowledged counts, consumers and delivery rates. Authenticate and keep the host HTTP listener on loopback. A confirm does not mean completed work. |
+| Flower 2.2.0 | [Configuration](https://flower.readthedocs.io/en/latest/config.html), [Celery monitoring](https://docs.celeryq.dev/en/stable/userguide/monitoring.html) and [events](https://docs.celeryq.dev/en/stable/userguide/monitoring.html#events) | Enable worker/send events explicitly, use authenticated read-only Flower and avoid event-enabling broadcasts by setting `enable_events=false`. Preserve disabled Celery remote control; no new result backend. |
+| pgAdmin 9.17 / PostgreSQL 17 | [Container deployment](https://www.pgadmin.org/docs/pgadmin4/latest/container_deployment.html), [server registration](https://www.pgadmin.org/docs/pgadmin4/latest/server_dialog.html) and [PostgreSQL grants](https://www.postgresql.org/docs/17/sql-grant.html) | Pre-register the existing database and connect using a dedicated read-only role; keep credentials outside public JSON/docs and use supported password-file handling. Viewer login does not itself restrict database privileges. |
+| SeaweedFS 4.48 | [Pinned admin command](https://github.com/seaweedfs/seaweedfs/blob/4.48/weed/command/admin.go) and [read-only middleware](https://github.com/seaweedfs/seaweedfs/blob/4.48/weed/admin/handlers/admin_handlers.go#L254) and [file reads](https://github.com/seaweedfs/seaweedfs/blob/4.48/weed/admin/handlers/file_browser_handlers.go#L379) | Existing image includes authenticated `weed admin` and read-only request enforcement. Its filer access is cluster-wide, not the application's S3 identity. Treat it as a privileged synthetic-only operator console; verify and disclose raw/quarantined file read/download access. Authentication and read-only writes do not imply the application's owner or malware gate. |
+| ClamAV 1.5.4 | [Daemon usage](https://docs.clamav.net/manual/Usage/Scanning.html) and [official Docker deployment](https://docs.clamav.net/manual/Installing/Docker.html) | Use the official `clamdtop` terminal dashboard for scan queue/memory/signature information, the pinned image contains `/usr/bin/clamdtop`; supplement with health/version checks and application scan events. Do not publish the unauthenticated daemon port or introduce an unrelated scanning portal. |
+| Local relay and Converse provider | [Existing relay implementation](../backend/matching/management/commands/relay_jobs.py), [provider health implementation](../backend/local_converse.py) and [privacy-limited diagnostics](decisions/0004-searchable-observability.md) | Inspect the heartbeat/health contract and correlated service events in OpenObserve. These project-specific processes do not have separate vendor dashboards; the provider remains a deterministic local HTTP contract. |
+
+Registry-confirmed images selected for runtime verification:
+
+- `rabbitmq:4.3.6-alpine@sha256:6931816af1a943f471c038b278835d36692d55dec769232739296bb91b7de0f5` (same base release; enable management offline without changing broker identity/volumes).
+- `mher/flower:2.2.0@sha256:b4d3a7b1ed1bba28a32d9ad3c039571c74fe35c2d0ddb9ef7a8d42a3ca38b1bb`.
+- `dpage/pgadmin4:9.17@sha256:c332c5f6dfba995d9ebc4af261d93506d6876085d712eaaa3defc8dd1a3f26de`.
+
+RabbitMQ plugin availability and SeaweedFS file-browser read/download capabilities
+remain runtime prerequisites until verified. The running scanner image contains
+`/usr/bin/clamdtop`; open its terminal dashboard with
+`docker compose exec scanner clamdtop`. Interactive observations remain to be
+verified. Flower stores transport task
+state, while this application's wrapper deliberately catches unexpected exceptions
+to prevent raw private failures reaching Celery formatting. A green Flower task
+therefore cannot establish a successful comparison or application retry semantics;
+inspect the durable job record and correlated lifecycle events too.

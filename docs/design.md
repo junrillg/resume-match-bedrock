@@ -39,6 +39,53 @@ After commit, the relay publishes only a UUID. The worker fetches verified sourc
 
 Redis has no required caching role; Kafka has no retained-stream consumer here. Business scope stays small while storage/recovery/access mechanisms remain complete for the stated flow.
 
+## Service inspection
+
+The next local milestone adds a connected inspection surface for every selected service.
+Viewer coverage is part of the operating contract, including startup, private access,
+meaningful sample activity and documented interpretation. It does not change the seven
+business steps or authorize AWS access. [ADR 0007](decisions/0007-service-inspection.md)
+records the service inventory and least-privilege boundaries.
+
+| Service boundary | Inspection surface | What it establishes |
+| --- | --- | --- |
+| React/nginx + Django API | Existing application plus browser Network panel | Request/status/response and owner-visible report |
+| Celery worker | Flower at `127.0.0.1:5555/tasks` | Worker heartbeat and transport task lifecycle; comparison outcome remains in PostgreSQL |
+| RabbitMQ | Management at `127.0.0.1:15672/#/queues` | Quorum queue, consumers, ready/unacknowledged messages and delivery activity |
+| PostgreSQL | pgAdmin at `127.0.0.1:5050`, dedicated read-only database role | Document/job/outbox/result relationships and durable business state |
+| SeaweedFS | Authenticated read-only `weed admin` at `127.0.0.1:23646/files?path=/buckets/resume-originals` | Cluster/bucket/object inventory; privileged raw-object visibility is separate from the owner-scoped application |
+| API/relay/worker/provider diagnostics | Existing OpenObserve | Correlated, payload-free lifecycle events |
+| Relay | OpenObserve plus supported process/heartbeat inspection | Dispatch intent and publication/recovery without inventing a separate relay GUI |
+| ClamAV | Official `clamdtop` terminal dashboard, plus health and OpenObserve safety events | Scan queue, memory/signature readiness and rejection; daemon port stays private |
+| Local Converse provider | OpenObserve and existing health endpoint | Separate HTTP hop and safe success/rejection state; no live Bedrock console claim |
+| Initialization/migrations | Compose completion state and bounded operational output | Successful prerequisite completion; no extra permanent dashboard |
+
+All new host listeners bind loopback. Separate viewer passwords are generated into the existing
+owner-only ignored environment and shown only by the explicit private credentials
+command. Existing credentials and named volumes remain intact. Monitoring must not
+require enabling Celery remote-control commands or exposing raw database, S3, scanner,
+filer/master, gRPC or AMQP ports. SeaweedFS administration is a privileged synthetic-only
+operator surface: read-only is cluster-wide and does not imply owner-scoped or
+clean-only reads. Its separate login must not be presented as an application user
+account. Research must resolve any viewer capability or privilege uncertainty before
+wiring that viewer; an unavailable GUI must be reported with its supported inspection
+alternative, never silently skipped.
+
+## Inspection delivery record
+
+| Requirement | Status | Evidence | Next action |
+| --- | --- | --- | --- |
+| Complete service/viewer inventory and access design | Planned | ADR 0007 and primary-source review | Resolve exact viewer releases/capabilities before implementation |
+| Connected default startup and private, least-privilege access | Planned | Existing startup preserves credentials/volumes; new viewer runtime not yet verified | Implement viewer wiring and focused configuration/startup checks |
+| Meaningful task/queue/database/storage activity | Planned | Existing business flow only; new viewers not yet observed | Observe held backlog, resumed processing, successful comparison and a controlled business failure |
+| Public operating reference and matching diagrams | Planned | Existing docs describe OpenObserve only | Add access/interpretation map and actual verification evidence after runtime checks |
+
+Two implementation milestones follow this research/design commit: **runtime viewers
+and focused tests**, then **operating docs, diagrams and final evidence**. Each
+milestone is verified and committed before the next. Completion requires actual
+sample activity in the selected interfaces, not merely healthy containers or empty
+screens. Keep the existing stack running for review and preserve unrelated work.
+
 ## Failure boundaries
 
 Object outage leaves recoverable upload identity, not a processable missing source. Broker outage leaves durable outbox intent. Pending cloud scans defer provider work within the job deadline; failed/unavailable scanning fails closed. Token checks prevent stale completion. Document deletion/expiry denies access and fences related work before retried object cleanup. Diagnostics can fail without failing business processing.
