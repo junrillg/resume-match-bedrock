@@ -54,6 +54,24 @@ Owners can download a ready original through an authorized, attachment-only, no-
 
 The provider budget is three claims with 2/4-second retry backoff and a ten-minute job deadline; leases last 90 seconds. Cloud scan pending uses its separate deferral within that deadline. [Exact operating/source reference →](implementation-guide.md)
 
+## Inspect service boundaries
+
+![RabbitMQ, Celery, PostgreSQL and object storage connect to separate local inspection surfaces; business UUID delivery remains distinct from read-only inspection.](assets/service-inspection.svg)
+
+[Diagram source](assets/service-inspection.mmd)
+
+RabbitMQ Management exposes backlog and consumers; Flower consumes task events;
+pgAdmin reads the four application record tables; SeaweedFS admin inspects storage.
+OpenObserve correlates API/relay/worker/provider lifecycle events, while `clamdtop`
+shows the scanner's queue and signature state. These surfaces accompany the existing
+seven business steps and do not become part of request completion.
+
+Task completion is a transport observation: the application can reject a document
+while Flower shows `SUCCESS`. PostgreSQL owns the comparison outcome. Database and
+storage viewers are privileged synthetic-only operator surfaces; read-only storage
+access includes raw/quarantined files and is separate from application owner/safety
+checks. [Access, permissions and current verification →](implementation-guide.md#service-inspection)
+
 ## Evidence and deployment limits
 
 The synthetic weights Python 3, Django 3, React 2 and unmatched PostgreSQL 2 produce **80%**. Application code validates literal quotes and skill mentions, then scores matched weight / total weight. This measures document evidence, not competence, truth or fairness.

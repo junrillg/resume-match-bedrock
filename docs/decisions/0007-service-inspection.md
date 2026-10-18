@@ -1,7 +1,8 @@
 # ADR 0007: connected service inspection
 
-Status: proposed. Research/design precedes implementation; new viewer runtime and
-browser observations are not yet verified.
+Status: accepted and implemented in `17ba0eb`. Runtime access, permissions and
+synthetic processing are verified; authenticated populated browser review of
+RabbitMQ Management, Flower, pgAdmin and SeaweedFS admin remains pending.
 
 ## Context
 
@@ -34,7 +35,7 @@ API and uses a separate read-only login. Keep native database, S3, scanner,
 filer/master, gRPC and AMQP sockets off the host; the admin process must not expose
 an unauthenticated gRPC listener to the Compose network.
 
-Planned endpoints are RabbitMQ `:15672/#/queues`, Flower `:5555/tasks`, pgAdmin
+Endpoints are RabbitMQ `:15672/#/queues`, Flower `:5555/tasks`, pgAdmin
 `:5050` and SeaweedFS `:23646/files?path=/buckets/resume-originals`, all on loopback.
 Enable RabbitMQ Management on the same 4.3.6 alpine release and retain its broker
 volume and identity.
@@ -68,10 +69,16 @@ visible as Compose completion states.
   task completion and durable business outcome. Restore stopped services afterward.
 - Verify live interfaces against meaningful activity, and record any unavailable
   screen or capability as a blocker rather than claiming empty startup as coverage.
-- Update public architecture/operating docs and private learning context while
-  preserving their one-way publication boundary. No live AWS or paid calls.
+- Keep public architecture/operating docs and diagrams aligned with actual runtime
+  and observed evidence. No live AWS or paid calls.
 
 ## Consequences
+
+Ten focused checks and real service/API observations passed, including an 80%
+default comparison while pgAdmin was stopped, an EICAR document rejection and the
+interactive scanner dashboard. Four new browser GUIs still require authenticated
+visual review. [Recorded evidence](../implementation-guide.md#inspection-evidence--2026-10-18)
+distinguishes those checks.
 
 The stack gains local operating visibility and additional container/resource cost.
 Viewer event histories are diagnostic and may be incomplete across outages or

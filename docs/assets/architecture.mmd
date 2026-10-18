@@ -3,8 +3,8 @@ flowchart TB
   accTitle: Local comparison in seven business steps
   accDescr: SeaweedFS originals, ClamAV, the HTTP provider, PostgreSQL and RabbitMQ run under Compose. Reads overlap background processing. Safe process logs reach OpenObserve.
   UI["1 Submit · React + nginx"] --> API["2.1 Django validates; PostgreSQL reserves identity"]
-  API --> O["2.2 SeaweedFS S3 PUT · exact original"]
-  O --> AD["2.3 PostgreSQL pending document + queued Job + Outbox"]
+  API --> STORE["2.2 SeaweedFS S3 PUT · exact original"]
+  STORE --> AD["2.3 PostgreSQL pending document + queued Job + Outbox"]
   AD --> R["3 Relay · publish UUID; await confirmation"] --> Q["4 Queue · RabbitMQ quorum"] --> W["5 Process · leased Celery worker"]
   W --> GET["5.1 SeaweedFS GET + size/SHA check"]
   GET --> SCAN["5.2 ClamAV · fail closed before parsing"]
@@ -15,4 +15,4 @@ flowchart TB
   W -->|"Validate; current lease"| D["6 Save · same PostgreSQL<br/>Score + one report + terminal state"]
   Read["7 Read · React polls /api/jobs/"] -. "Concurrent after receipt" .-> API
   API -. "Status + optional saved report" .-> Read
-  W -. "API / relay / worker / provider metadata" .-> O["OpenObserve OSS"]
+  W -. "API / relay / worker / provider metadata" .-> LOGS["OpenObserve OSS"]

@@ -84,9 +84,10 @@ Cloud scanning uses [GuardDuty Malware Protection for S3](https://docs.aws.amazo
 ## Connected service inspection review — 2026-10-18
 
 The [inspection decision](decisions/0007-service-inspection.md) adds operating
-visibility to the existing services. These are source and registry findings;
-container startup, authentication, permissions and populated interfaces still
-require the runtime milestone. Image availability alone is not integration evidence.
+visibility to the existing services. These source and registry findings informed the runtime milestone. Container
+startup, authentication and permissions are now checked; populated browser review
+of the four new GUIs remains pending. [Runtime evidence](implementation-guide.md#inspection-evidence--2026-10-18)
+is distinct from image availability.
 
 | Boundary and selected release | Primary source | Decision supported |
 | --- | --- | --- |
@@ -103,11 +104,11 @@ Registry-confirmed images selected for runtime verification:
 - `mher/flower:2.2.0@sha256:b4d3a7b1ed1bba28a32d9ad3c039571c74fe35c2d0ddb9ef7a8d42a3ca38b1bb`.
 - `dpage/pgadmin4:9.17@sha256:c332c5f6dfba995d9ebc4af261d93506d6876085d712eaaa3defc8dd1a3f26de`.
 
-RabbitMQ plugin availability and SeaweedFS file-browser read/download capabilities
-remain runtime prerequisites until verified. The running scanner image contains
-`/usr/bin/clamdtop`; open its terminal dashboard with
-`docker compose exec scanner clamdtop`. Interactive observations remain to be
-verified. Flower stores transport task
+RabbitMQ Management is active on the pinned base. SeaweedFS read-only HTTP
+access and delete denial were checked; pinned source establishes the privileged
+file-read/download boundary. The running scanner image contains `/usr/bin/clamdtop`;
+`docker compose exec scanner clamdtop` connected to the daemon and displayed
+signature/queue state. Flower stores transport task
 state, while this application's wrapper deliberately catches unexpected exceptions
 to prevent raw private failures reaching Celery formatting. A green Flower task
 therefore cannot establish a successful comparison or application retry semantics;

@@ -41,7 +41,7 @@ Redis has no required caching role; Kafka has no retained-stream consumer here. 
 
 ## Service inspection
 
-The next local milestone adds a connected inspection surface for every selected service.
+The local runtime includes a connected inspection surface for every selected service.
 Viewer coverage is part of the operating contract, including startup, private access,
 meaningful sample activity and documented interpretation. It does not change the seven
 business steps or authorize AWS access. [ADR 0007](decisions/0007-service-inspection.md)
@@ -75,16 +75,16 @@ alternative, never silently skipped.
 
 | Requirement | Status | Evidence | Next action |
 | --- | --- | --- | --- |
-| Complete service/viewer inventory and access design | Planned | ADR 0007 and primary-source review | Resolve exact viewer releases/capabilities before implementation |
-| Connected default startup and private, least-privilege access | Planned | Existing startup preserves credentials/volumes; new viewer runtime not yet verified | Implement viewer wiring and focused configuration/startup checks |
-| Meaningful task/queue/database/storage activity | Planned | Existing business flow only; new viewers not yet observed | Observe held backlog, resumed processing, successful comparison and a controlled business failure |
-| Public operating reference and matching diagrams | Planned | Existing docs describe OpenObserve only | Add access/interpretation map and actual verification evidence after runtime checks |
+| Complete service/viewer inventory and access design | Verified | ADR 0007, checked release sources and pinned images | Retain the complete inventory when services change |
+| Connected default startup and private, least-privilege access | Verified | 13 healthy services; auth/permission checks and 10 focused tests | Preserve existing secrets/volumes |
+| Meaningful task/queue/database/storage activity | Runtime verified; GUI review pending | Real success/rejection, default 80% with pgAdmin stopped, OpenObserve and clamdtop observations | Review populated RabbitMQ, Flower, pgAdmin and SeaweedFS screens after login |
+| Public operating reference and matching diagrams | Implemented | [Access/evidence reference](implementation-guide.md#service-inspection) and inspection diagram | Verify published diagram and finish pending GUI review |
 
-Two implementation milestones follow this research/design commit: **runtime viewers
-and focused tests**, then **operating docs, diagrams and final evidence**. Each
-milestone is verified and committed before the next. Completion requires actual
-sample activity in the selected interfaces, not merely healthy containers or empty
-screens. Keep the existing stack running for review and preserve unrelated work.
+The design commit preceded **runtime viewers and focused tests** (`17ba0eb`);
+**operating docs, diagrams and final evidence** follow that runtime milestone.
+Authenticated populated browser review of the four new GUIs remains pending.
+Healthy containers and successful API checks do not close that requirement.
+The stack remains running for review.
 
 ## Failure boundaries
 

@@ -30,9 +30,26 @@ The separate AWS Terraform design uses private S3, GuardDuty Malware Protection 
 ./scripts/lab up
 ```
 
-Allow at least 8 GiB for Docker; ClamAV reserves 4 GiB and uses AMD64 emulation on ARM64. Initial signature updates require internet access. Open <http://127.0.0.1:8088>; run `./scripts/lab credentials` in your private terminal for generated logins. The synthetic sample returns **80%**. Search correlated events in OpenObserve at <http://127.0.0.1:5080>.
+Allow at least 8 GiB for Docker; ClamAV reserves 4 GiB and uses AMD64 emulation on ARM64. Initial signature updates require internet access. Open <http://127.0.0.1:8088>; run `./scripts/lab credentials` in your private terminal for generated logins. The synthetic sample returns **80%**. The same startup connects the service viewers below.
 
 `./scripts/lab down` preserves volumes. Keep their ignored `.env`; replacing passwords does not update initialized services. `./scripts/lab help` lists commands.
+
+## Inspect the running flow
+
+| Surface | Local address | View |
+| --- | --- | --- |
+| Application | <http://127.0.0.1:8088> | Owned documents, comparison status and reports |
+| RabbitMQ Management | <http://127.0.0.1:15672/#/queues> | Queue backlog, consumers and delivery activity |
+| Flower | <http://127.0.0.1:5555/tasks> | Celery task events and worker heartbeat |
+| pgAdmin | <http://127.0.0.1:5050> | Read-only document/job/outbox/result records |
+| SeaweedFS admin | <http://127.0.0.1:23646/files?path=/buckets/resume-originals> | Privileged, read-only storage inventory |
+| OpenObserve | <http://127.0.0.1:5080> | Correlated application/process events |
+| ClamAV | `docker compose exec scanner clamdtop` | Live terminal scan queue and signature state |
+
+All web listeners bind loopback and use generated private logins. Storage administration
+can read raw/quarantined originals across accounts; it is a synthetic-only operator
+surface. Flower task completion does not establish comparison success. [Access,
+permissions and observed behavior →](docs/implementation-guide.md#service-inspection)
 
 ## Engineering references
 

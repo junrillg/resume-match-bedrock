@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1060" height="884" viewBox="0 0 1060 884" role="img" aria-labelledby="service-inspection-title service-inspection-desc">
+<title id="service-inspection-title">Inspect local service boundaries</title>
+<desc id="service-inspection-desc">RabbitMQ delivers UUID tasks to Celery while separate authenticated local viewers inspect queue metrics, task events, four database tables and privileged object storage. Dashed arrows show inspection or events; PostgreSQL remains the business ledger.</desc>
+<defs>
+<marker id="inspection-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#37566b"/></marker>
+<marker id="inspection-arrow-accent" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#173146"/></marker>
+<marker id="inspection-arrow-link" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#37566b"/></marker>
+</defs>
+<style>text{font-family:Arial,Helvetica,sans-serif;fill:#173146}.title{font-size:28px;font-weight:700}.label{font-size:20px;font-weight:700}.body{font-size:16px}.small{font-size:16px;fill:#41596b}.technical{font-family:monospace;font-size:16px;fill:#41596b}.edge{fill:none;stroke:#37566b;stroke-width:2;marker-end:url(#inspection-arrow)}.inspect{stroke-dasharray:6 4}</style>
+<rect width="1060" height="884" fill="#fff"/>
+<text x="32" y="44" class="title">Inspect local service boundaries</text>
+<text x="32" y="76" class="small">Local synthetic-data runtime · every viewer web listener binds 127.0.0.1</text>
+<text x="72" y="120" class="technical">BUSINESS SERVICES</text>
+<text x="652" y="120" class="technical">AUTHENTICATED VIEWERS</text>
+<!-- Connections paint first. Inspection is distinct from actual task delivery. -->
+<path class="edge inspect" d="M652 196H392"/>
+<path class="edge inspect" d="M392 324H652"/>
+<path class="edge inspect" d="M652 452H392"/>
+<path class="edge inspect" d="M652 580H392"/>
+<path class="edge" d="M232 244V276"/>
+<rect x="428" y="160" width="188" height="24" fill="#fff"/><text x="440" y="176" class="small">Queue / consumers</text>
+<rect x="420" y="288" width="204" height="24" fill="#fff"/><text x="428" y="304" class="small">Events via RabbitMQ</text>
+<rect x="428" y="416" width="188" height="24" fill="#fff"/><text x="436" y="432" class="small">SELECT four tables</text>
+<rect x="420" y="544" width="204" height="24" fill="#fff"/><text x="428" y="560" class="small">Cluster-wide reads</text>
+
+<rect x="72" y="148" width="320" height="96" rx="8" fill="#f0f7f8" stroke="#8ba4b4"/>
+<text x="88" y="176" class="label">RabbitMQ quorum queue</text>
+<text x="88" y="204" class="body">Persistent job-reference delivery</text>
+<text x="88" y="228" class="technical">resume.match.quorum</text>
+<rect x="652" y="148" width="320" height="96" rx="8" fill="#fff" stroke="#8ba4b4"/>
+<text x="668" y="176" class="label">RabbitMQ Management</text>
+<text x="668" y="204" class="body">Queues, consumers and rates</text>
+<text x="668" y="228" class="technical">:15672 · lab_monitor</text>
+<rect x="72" y="276" width="320" height="96" rx="8" fill="#f0f7f8" stroke="#8ba4b4"/>
+<text x="88" y="304" class="label">Celery worker</text>
+<text x="88" y="332" class="body">Process wrapper; emit task events</text>
+<text x="88" y="356" class="technical">Remote control disabled</text>
+<rect x="652" y="276" width="320" height="96" rx="8" fill="#fff" stroke="#8ba4b4"/>
+<text x="668" y="304" class="label">Flower</text>
+<text x="668" y="332" class="body">Transport task lifecycle</text>
+<text x="668" y="356" class="technical">:5555/tasks · viewer</text>
+<rect x="72" y="404" width="320" height="96" rx="8" fill="#f0f7f8" stroke="#8ba4b4"/>
+<text x="88" y="432" class="label">PostgreSQL</text>
+<text x="88" y="460" class="body">Document / Job / Outbox / Match</text>
+<text x="88" y="484" class="technical">Authoritative business outcome</text>
+<rect x="652" y="404" width="320" height="96" rx="8" fill="#fff" stroke="#8ba4b4"/>
+<text x="668" y="432" class="label">pgAdmin</text>
+<text x="668" y="460" class="body">Read-only application rows</text>
+<text x="668" y="484" class="technical">:5050 · lab_viewer connection</text>
+<rect x="72" y="532" width="320" height="96" rx="8" fill="#f0f7f8" stroke="#8ba4b4"/>
+<text x="88" y="560" class="label">SeaweedFS originals</text>
+<text x="88" y="588" class="body">Stored source bytes + metadata</text>
+<text x="88" y="612" class="technical">Raw / quarantined originals</text>
+<rect x="652" y="532" width="320" height="96" rx="8" fill="#fff" stroke="#8ba4b4"/>
+<text x="668" y="560" class="label">SeaweedFS admin</text>
+<text x="668" y="588" class="body">Privileged read-only operator</text>
+<text x="668" y="612" class="technical">:23646/files · viewer</text>
+<text x="72" y="676" class="small">OpenObserve :5080 correlates API, relay, worker and provider events.</text>
+<text x="72" y="704" class="technical">ClamAV terminal: docker compose exec scanner clamdtop</text>
+<text x="72" y="744" class="body">Flower SUCCESS means the wrapper returned; inspect the job for comparison success.</text>
+<text x="72" y="772" class="body">Storage admin can read raw originals; application owner and scan gates do not apply.</text>
+<line x1="32" y1="804" x2="1028" y2="804" stroke="#8ba4b4"/>
+<path class="edge" d="M72 836H136"/><text x="152" y="840" class="small">Business task delivery</text>
+<path class="edge inspect" d="M448 836H512"/><text x="528" y="840" class="small">Inspection / diagnostic events</text>
+</svg>

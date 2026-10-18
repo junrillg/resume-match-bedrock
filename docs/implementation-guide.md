@@ -4,17 +4,79 @@ Use this reference for source, API and operating contracts. The [architecture](a
 
 ## Runtime and entry point
 
-`./scripts/lab up` builds and starts React/nginx, Django, PostgreSQL, persistent SeaweedFS S3 storage, ClamAV, the relay, RabbitMQ, Celery worker, HTTP Converse provider and OpenObserve. Initialization creates private local storage identities/bucket and applies migrations before admission. `./scripts/lab down` stops the project while retaining its database, object, scanner-definition, broker and viewer volumes.
+`./scripts/lab up` builds and starts React/nginx, Django, PostgreSQL, persistent SeaweedFS S3 storage, ClamAV, the relay, RabbitMQ, Celery worker, HTTP Converse provider, OpenObserve, Flower, pgAdmin and SeaweedFS admin. Initialization creates private local storage identities/bucket and applies migrations before admission. `./scripts/lab down` stops the project while retaining its database, object, scanner-definition, broker and viewer volumes.
 
 | Artifact | Responsibility |
 | --- | --- |
 | [`compose.yaml`](../compose.yaml) and [`scripts/lab`](../scripts/lab) | Startup, resource/health checks, local secrets, sample runtime and test commands |
 | [`storage/start.sh`](../storage/start.sh) / [`backend/init_storage.py`](../backend/init_storage.py) | Private S3-compatible identities, storage startup and bucket initialization |
+| [`backend/init_viewers.py`](../backend/init_viewers.py) / [`viewing/`](../viewing/) | Dedicated inspection roles, private connection files and read-only viewer configuration |
 | [`backend/Dockerfile`](../backend/Dockerfile) / [`frontend/Dockerfile`](../frontend/Dockerfile) | Pinned application build/runtime |
 | [`frontend/nginx.conf`](../frontend/nginx.conf) | Same-origin API proxy; Docker DNS locally, task-local upstream on ECS |
 | [`infra/terraform/`](../infra/terraform/README.md) | Separate AWS resources and reviewed release/bootstrap process |
 
-The app is <http://127.0.0.1:8088>; OpenObserve is <http://127.0.0.1:5080>. Run `./scripts/lab credentials` in a private terminal. Ignored owner-only `.env` stores generated local credentials; preserve it with initialized volumes. Local HTTP/debug and single-node services must remain restricted to synthetic data. Object, database, scanner and broker ports stay inside Compose. Allow at least 8 GiB for Docker; the private scanner reserves 4 GiB, needs initial definition downloads and uses AMD64 emulation on ARM64.
+The app is <http://127.0.0.1:8088>; OpenObserve is <http://127.0.0.1:5080>. Run `./scripts/lab credentials` in a private terminal. Ignored owner-only `.env` stores generated local credentials; preserve it with initialized volumes. Local HTTP/debug and single-node services must remain restricted to synthetic data. Native object, database, scanner and AMQP ports stay inside Compose; authenticated HTTP viewers are separate loopback endpoints. Allow at least 8 GiB for Docker; the private scanner reserves 4 GiB, needs initial definition downloads and uses AMD64 emulation on ARM64.
+
+## Service inspection
+
+`./scripts/lab up` starts every viewer with the business services. Run
+`./scripts/lab credentials` only in a private terminal for the generated passwords.
+The ignored owner-only `.env` preserves each separate login; do not replace it while
+retaining initialized volumes. No password belongs in a URL or published screenshot.
+
+| Surface | Entry and login | Interpretation / boundary |
+| --- | --- | --- |
+| Application/API | <http://127.0.0.1:8088>, user `lab`; browser Network panel for API calls | Owner-visible document, comparison and report state |
+| RabbitMQ Management | <http://127.0.0.1:15672/#/queues>, user `lab_monitor` | Queue `resume.match.quorum`; ready versus unacknowledged messages, consumers and rates. Monitoring role has no queue/exchange configure, read or write permission. |
+| Flower | <http://127.0.0.1:5555/tasks>, user `viewer` | Event-based task lifecycle and worker heartbeat. Read-only UI and event-scoped broker account; no business-queue read/control permission. |
+| pgAdmin | <http://127.0.0.1:5050>, email `lab@example.invalid` | Preconfigured **Resume Match (read only)** connection as `lab_viewer`; SELECT only on `matching_document`, `matching_job`, `matching_outboxevent`, `matching_match`. It can read all owners' rows in those tables, including synthetic source/results; it is an operator account, not application tenancy. |
+| SeaweedFS admin | <http://127.0.0.1:23646/files?path=/buckets/resume-originals>, user `viewer` | Read-only cluster/filer access. Raw/quarantined files can be read or downloaded outside the application's clean-only owner checks; synthetic-only privileged operator boundary. |
+| OpenObserve | <http://127.0.0.1:5080>, email `lab@example.invalid` | Search `resume_match` by request/job/document UUID; service `api`, `relay`, `worker`, `provider` and lifecycle body explain the application outcome. |
+| ClamAV | `docker compose exec scanner clamdtop` | Supported terminal dashboard for daemon queue/memory/signature state; `q` quits. The unauthenticated daemon socket is not published. |
+| Relay / local provider | OpenObserve; `./scripts/lab status` for heartbeat/health | Custom processes have no independent vendor GUI. Inspect dispatch/provider events beside the durable job; provider health is not a real Bedrock invocation. |
+| Initialization | `./scripts/lab status` | Completed migrations/storage/viewer initialization are prerequisites, not permanent dashboards. |
+
+Flower 2.2.0 and the worker both use Celery 5.6.3. Explicit worker/send events feed
+Flower; no result backend was added. Celery remote control stays disabled, so detailed
+worker inspectors and administrative controls are unavailable. Task history is bounded
+to 1,000 in-memory records and is lost when Flower restarts.
+
+Each delivery has a **Celery task UUID**, while its single argument contains the
+**application job UUID**. A relay retry can create another task UUID for the same job.
+The wrapper returns safely after application-owned rejection or retry handling;
+Flower can therefore show `SUCCESS` for a failed comparison. PostgreSQL job state and
+OpenObserve lifecycle events establish the business outcome. Neither queue confirmation
+nor a green transport task proves that a report exists.
+
+Only HTTP viewer ports are published on loopback. SeaweedFS admin's otherwise
+unauthenticated gRPC listener stays on container loopback `127.0.0.1:33646`.
+Additional viewers used about **337 MiB** after the checked workload; the running
+stack used about **2.38 GiB** at that point. These are local snapshots, not capacity
+requirements or guarantees; retain the stated Docker minimum and scanner allowance.
+
+### Inspection evidence — 2026-10-18
+
+Runtime configuration and focused checks passed: 13 long-running services healthy;
+authenticated/unauthenticated access boundaries; RabbitMQ topology mutations denied;
+PostgreSQL SELECT restricted to four matching tables with auth/session reads,
+business UPDATE and schema CREATE denied even after disabling the session read-only
+default; SeaweedFS authenticated access, delete rejection and private gRPC binding.
+Ten focused checks cover startup/secret preservation, viewer drift and task-exception
+privacy. They do not replace populated browser-interface observations.
+
+Real queued work completed with separate task/job identities. A one-requirement
+synthetic comparison succeeded at 100%; an EICAR source was rejected by the document
+gate while its Celery task still showed `SUCCESS`. OpenObserve browser search found
+eight success events across four services and five events for the rejection. The
+application's default synthetic comparison returned **80%** with pgAdmin stopped;
+pgAdmin was restored and all 13 services returned healthy. This checks one viewer
+outage, not every possible viewer failure mode.
+
+The live `clamdtop` terminal connected to `/tmp/clamd.sock`, displayed engine 1.5.4,
+signature database revision 28156 dated 2026-10-17 and an empty scan queue, then exited cleanly.
+**Pending:** authenticated, populated browser-screen review of RabbitMQ Management,
+Flower, pgAdmin and SeaweedFS admin. Their HTTP/API and permission checks passed;
+visual usability and displayed sample state are not yet verified.
 
 ## Source handoffs
 
@@ -159,3 +221,5 @@ before the remaining UI/logging implementation; it has not been backdated.
 | Private S3, GuardDuty and cloud lifecycle wiring | [3c05f3f](https://github.com/junrillg/resume-match-bedrock/commit/3c05f3fc26d3c838b246eea17c02f0027b91e98f) |
 | Explicit local object endpoint required | [4c8e18a](https://github.com/junrillg/resume-match-bedrock/commit/4c8e18a5c544e142a604336c1c47cf415e90818e) |
 | Document-aware UI | [d290381](https://github.com/junrillg/resume-match-bedrock/commit/d290381664ebe3e62532d6756d5989af472972ca) |
+| Connected inspection design | [f60d186](https://github.com/junrillg/resume-match-bedrock/commit/f60d186) |
+| Connected read-only service viewers | [17ba0eb](https://github.com/junrillg/resume-match-bedrock/commit/17ba0ebb14af3852a2c2682f48d0c2e993a42bba) |
