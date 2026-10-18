@@ -2,7 +2,7 @@
 
 Reviewers upload or reuse a résumé, set weighted requirements and receive a coverage score with supporting source quotes. Private object storage retains the original; PostgreSQL owns document identity, processing state and results. Background processing stays independent of the browser request.
 
-![Seven business steps: submit, reserve/store/admit, relay, queue, fetch and process, save, then read the report.](https://raw.githubusercontent.com/junrillg/resume-match-bedrock/8aaace9d884240208ecd9d07bdfd8ace2b1c1271/docs/assets/architecture.svg)
+![Seven business steps: submit, reserve/store/admit, relay, queue, fetch and process, save, then read the report.](https://raw.githubusercontent.com/junrillg/resume-match-bedrock/4dec8c528107a7c22d4364167a9d9a252a280e5e/docs/assets/architecture.svg)
 
 ## One comparison, end to end
 
