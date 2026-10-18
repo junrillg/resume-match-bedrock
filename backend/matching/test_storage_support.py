@@ -2,6 +2,19 @@
 import io
 from unittest.mock import patch
 
+from django.test import SimpleTestCase, override_settings
+
+
+class StorageClientSafetyTests(SimpleTestCase):
+    @override_settings(DEBUG=True, DOCUMENT_ENDPOINT="")
+    def test_local_mode_requires_explicit_endpoint_before_constructing_sdk_client(self):
+        from .documents import client, DocumentUnavailable
+
+        with patch("matching.documents.boto3.client") as sdk_client:
+            with self.assertRaises(DocumentUnavailable):
+                client()
+        sdk_client.assert_not_called()
+
 
 class MemoryStorage:
     def __init__(self):

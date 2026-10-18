@@ -39,6 +39,8 @@ class DocumentIntegrityError(DocumentError):
 
 
 def client():
+    if settings.DEBUG and not settings.DOCUMENT_ENDPOINT:
+        raise DocumentUnavailable()
     options = {}
     if settings.DOCUMENT_ENDPOINT:
         options = {"endpoint_url": settings.DOCUMENT_ENDPOINT,
