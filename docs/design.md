@@ -109,3 +109,17 @@ Each implementation milestone is verified and committed before the next. Existin
 runtime evidence is reused only where source/configuration and the guarantee remain
 unchanged. The model contract service, managed-service TLS and deployment wiring need
 new evidence. Three-zone AWS resilience is a deployment requirement, not a local result.
+
+## Durable document delivery sequence
+
+[ADR 0006](decisions/0006-durable-document-lifecycle.md) replaces the earlier source-discard scope. The following milestones are planned before implementation; earlier delivery history remains unchanged.
+
+| Milestone | Scope | Observable acceptance |
+| --- | --- | --- |
+| Storage design | Data inventory, original/record split, retention, security and recovery decisions | Primary-source research and this decision committed first. |
+| Durable processing | Document metadata/migration, S3 client, storage/scanner Compose services, admission/recovery, authorized download/reuse/reprocess/delete | Real SDK byte roundtrip, existing PostgreSQL tests, scan rejection, outage/recovery, persistence and deletion fencing. |
+| Cloud wiring | Private S3 and role/endpoint/KMS/lifecycle policies; scanner deployment/update requirements | Terraform format/schema and credential-free mock plans; no live cloud call. |
+| Document UI | Saved-source selection, download, reprocess and deletion with clear retention/status | Focused UI tests/build and desktop/mobile browser checks under the existing design. |
+| Architecture communication | Revised user-to-storage-to-worker-to-result diagrams and operating evidence | Public diagrams/links reflect shipped behavior and every material limit. |
+
+The changed flow is planned until those implementation milestones are verified. Exact files and evidence will be recorded with each milestone; documentation alone is not a working storage integration.
