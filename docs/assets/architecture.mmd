@@ -1,11 +1,17 @@
 %% Logical companion; architecture.svg is the self-contained publication layout.
 flowchart TB
   accTitle: Local comparison in seven business steps
-  accDescr: Real HTTP provider, PostgreSQL and RabbitMQ run under Compose. Reads overlap background processing. Safe process logs reach OpenObserve.
-  UI["1 Submit · React + nginx"] --> API["2 Accept · Django<br/>Atomic PostgreSQL Job + Outbox"]
-  API --> R["3 Relay · publish UUID; await confirmation"] --> Q["4 Queue · RabbitMQ quorum"] --> W["5 Process · leased Celery worker"]
-  W -->|"5.1 boto3 Converse"| P["Local HTTP contract provider:8090<br/>Deterministic evidence"]
+  accDescr: SeaweedFS originals, ClamAV, the HTTP provider, PostgreSQL and RabbitMQ run under Compose. Reads overlap background processing. Safe process logs reach OpenObserve.
+  UI["1 Submit · React + nginx"] --> API["2.1 Django validates; PostgreSQL reserves identity"]
+  API --> O["2.2 SeaweedFS S3 PUT · exact original"]
+  O --> AD["2.3 PostgreSQL pending document + queued Job + Outbox"]
+  AD --> R["3 Relay · publish UUID; await confirmation"] --> Q["4 Queue · RabbitMQ quorum"] --> W["5 Process · leased Celery worker"]
+  W --> GET["5.1 SeaweedFS GET + size/SHA check"]
+  GET --> SCAN["5.2 ClamAV · fail closed before parsing"]
+  SCAN --> PARSE["5.3 Parse or matching extraction cache"]
+  PARSE -->|"5.4 boto3 Converse"| P["Local HTTP contract provider:8090<br/>Deterministic evidence"]
   P -->|"Proposed quotes"| W
+  API -->|"Reuse owned unexpired source; no new PUT"| AD
   W -->|"Validate; current lease"| D["6 Save · same PostgreSQL<br/>Score + one report + terminal state"]
   Read["7 Read · React polls /api/jobs/"] -. "Concurrent after receipt" .-> API
   API -. "Status + optional saved report" .-> Read

@@ -1,0 +1,21 @@
+flowchart TB
+  accTitle: Durable document and comparison lifecycle
+  accDescr: New source is reserved in PostgreSQL, stored in private SeaweedFS, then queued. The worker verifies bytes and ClamAV before parsing and provider use. Owner retrieval, reuse, deletion and expiry share the stored original.
+  UI[1 React submits original or saved document] --> API[2 Django validates owner and retry identity]
+  API --> RES[2.1 PostgreSQL reservation + upload lease]
+  RES --> PUT[2.2 SeaweedFS S3 PUT exact bytes]
+  PUT --> ADMIT[2.3 PostgreSQL pending document + queued job + outbox]
+  API -->|Saved owned source; no new PUT| ADMIT
+  ADMIT --> RELAY[3 Relay publishes UUID only]
+  RELAY --> Q[4 RabbitMQ retains UUID]
+  Q --> W[5 Worker claims lease]
+  W --> OBJ[5.1 GET original + size/SHA check]
+  PUT -. Stored original .-> OBJ
+  OBJ --> SCAN[5.2 ClamAV clean gate]
+  SCAN --> PARSE[5.3 Parse or reuse matching extraction]
+  PARSE --> P[5.4 HTTP Converse provider + evidence validation]
+  P --> SAVE[6 PostgreSQL document/lease fence + scored report]
+  SAVE --> READ[7 React polls owner state and renders]
+  API -. Ready source .-> DL[Owner download; attachment + no-store]
+  API -. Delete or expiry .-> DEL[Tombstone + fence; relay retries object deletion]
+  RES -. Abandoned upload .-> DEL

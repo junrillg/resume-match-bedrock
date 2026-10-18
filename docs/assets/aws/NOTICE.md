@@ -3,7 +3,7 @@
 The AWS topology/support views use the matching official icons. The local flow uses
 no AWS icon for its PostgreSQL, RabbitMQ, HTTP contract provider or OpenObserve.
 
-- Publisher/guidance: [AWS Architecture Icons](https://aws.amazon.com/architecture/icons/), checked **17 October 2026**.
+- Publisher/guidance: [AWS Architecture Icons](https://aws.amazon.com/architecture/icons/), checked **18 October 2026**.
 - Package: [31 July 2026 release](https://d1.awsstatic.com/onedam/marketing-channels/website/public/shared/architecture-icon-release/Icon-package_07312026.5846e92413caa21490223536cc97f1269e44fa92.zip).
 - Files below retain the original archive bytes. SHA-256 and original archive entry:
 
@@ -39,6 +39,12 @@ no AWS icon for its PostgreSQL, RabbitMQ, HTTP contract provider or OpenObserve.
   `Architecture-Service-Icons_07312026/Arch_Management-Tools/64/Arch_Amazon-CloudWatch_64.svg`
 - [`Res_Elastic-Load-Balancing_Application-Load-Balancer_48.svg`](Res_Elastic-Load-Balancing_Application-Load-Balancer_48.svg) — `27bea44fffd83cc42ce68411e659761a114d41d6b89efc556afef969f96414aa`
   `Resource-Icons_07312026/Res_Networking-Content-Delivery/Res_Elastic-Load-Balancing_Application-Load-Balancer_48.svg`
+
+- [`Arch_Amazon-GuardDuty_64.svg`](Arch_Amazon-GuardDuty_64.svg) — `f336f781d32fb90f55fedba5521c7393e5f2b607cca79ef1a6c56dba9ab146a0`
+  `Architecture-Service-Icons_07312026/Arch_Security-Identity/64/Arch_Amazon-GuardDuty_64.svg`
+
+- [`Arch_Amazon-EventBridge_64.svg`](Arch_Amazon-EventBridge_64.svg) — `7e8eed6f3d27692c6abbfa2b04095760b727ba23a37d54129ef3530c001a9a1d`
+  `Architecture-Service-Icons_07312026/Arch_Application-Integration/64/Arch_Amazon-EventBridge_64.svg`
 
 The editable SVG diagrams embed the original vector paths, fills and geometry in
 proportionally scaled nested SVGs. Local element IDs are prefixed to avoid collisions;

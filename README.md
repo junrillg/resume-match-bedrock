@@ -1,35 +1,28 @@
 # Résumé Match · Evidence workbench
 
-A reviewer pastes résumé text or selects a PDF/TXT file, sets skill weights and clicks
-**Analyze evidence**. The page receives a job receipt, tracks progress and returns a
-weighted coverage score with supporting source quotes.
+Reviewers upload or reuse a résumé, set weighted requirements and receive a coverage score with supporting source quotes. Private object storage retains the original; PostgreSQL owns document identity, processing state and results. Background processing stays independent of the browser request.
 
-![The local seven-step comparison: submit, accept, relay, queue, process through an HTTP Converse service, save, and read the report.](docs/assets/architecture.svg)
+![Seven business steps: submit, reserve/store/admit, relay, queue, fetch and process, save, then read the report.](docs/assets/architecture.svg)
 
 ## One comparison, end to end
 
-1. **Submit:** React sends the document, requirements and a key identifying retries.
-2. **Accept:** Django commits the job and dispatch intent together in PostgreSQL, then returns a receipt.
-3. **Relay:** a separate process publishes the committed job ID and waits for broker confirmation.
-4. **Queue:** RabbitMQ retains that ID for delivery, keeping document content out of messages.
-5. **Process:** a worker claims a bounded lease, calls the HTTP evidence provider and validates source quotes.
-6. **Save:** application code checks the lease, calculates coverage and commits one report.
-7. **Read:** React polls durable status until the score or a safe error appears.
+1. **Submit:** React sends a PDF/TXT, pasted text or saved document ID with requirements and a retry key.
+2. **Accept:** Django reserves new document/job identity in PostgreSQL, stores the original, then atomically queues the job and its outbox. Reuse skips the new upload.
+3. **Relay:** a separate process publishes the committed job UUID and waits for broker confirmation.
+4. **Queue:** RabbitMQ retains that UUID; document content stays out of messages.
+5. **Process:** a leased worker fetches and verifies the original, passes the malware gate, parses or reuses versioned extraction, and validates proposed evidence.
+6. **Save:** application code checks the current document/lease, calculates coverage and commits one report.
+7. **Read:** React polls owner-scoped status and renders the result or a safe failure.
 
-Reads overlap background work. PostgreSQL owns the outcome when delivery repeats;
-provider calls may repeat, but at most one result is committed per job.
+A queued receipt confirms stored source and dispatch intent. A concurrent replay may instead return an **uploading** reservation: storage is not yet confirmed and interrupted uploads require unchanged-input retry. Neither receipt promises a completed report. [Admission and recovery →](docs/architecture.md)
 
-## The AWS service journey
+## Original files and application records
 
-The same flow has a separate Terraform deployment: Route 53 and an HTTPS load balancer
-reach ECS Fargate; RDS owns work/results; Amazon MQ connects relay and worker; the worker
-calls Bedrock privately. Identity, secrets, encryption and operations support that path.
+![Upload, storage, scan, processing, reuse and deletion boundaries.](docs/assets/document-lifecycle.svg)
 
-[Follow each AWS service →](docs/aws-service-journey.md)
+The local flow uses persistent SeaweedFS S3-compatible storage, ClamAV, PostgreSQL and RabbitMQ. Originals, extracted text and associated results follow the configurable **90-day** project policy. Owners can download clean originals, compare them again, reprocess them or request deletion. [Document lifecycle →](docs/document-lifecycle.md)
 
-Local execution is verified. Terraform defines the AWS deployment; it has not been deployed.
-The local HTTP Converse service returns deterministic evidence and exercises the SDK
-boundary, rather than model intelligence or managed AWS behavior.
+The separate AWS Terraform design uses private S3, GuardDuty Malware Protection for S3, ECS/Fargate, RDS, Amazon MQ and Bedrock. Official-icon diagrams show their responsibilities. Local execution and mocked configuration checks do not establish AWS deployment or managed-service behavior. [AWS journey →](docs/aws-service-journey.md)
 
 ## Run with Docker
 
@@ -37,24 +30,15 @@ boundary, rather than model intelligence or managed AWS behavior.
 ./scripts/lab up
 ```
 
-Allow at least 8 GiB for Docker: the private ClamAV scanner reserves 4 GiB.
-Its pinned image uses AMD64 emulation on ARM64; signature updates require internet access.
+Allow at least 8 GiB for Docker; ClamAV reserves 4 GiB and uses AMD64 emulation on ARM64. Initial signature updates require internet access. Open <http://127.0.0.1:8088>; run `./scripts/lab credentials` in your private terminal for generated logins. The synthetic sample returns **80%**. Search correlated events in OpenObserve at <http://127.0.0.1:5080>.
 
-Open <http://127.0.0.1:8088>. Run `./scripts/lab credentials` **in your private terminal**
-for the generated login. Load the synthetic sample: its expected score is **80%**.
-Search correlated process events in OpenObserve at <http://127.0.0.1:5080>.
+`./scripts/lab down` preserves volumes. Keep their ignored `.env`; replacing passwords does not update initialized services. `./scripts/lab help` lists commands.
 
-`./scripts/lab down` retains volumes. Keep the ignored `.env` with those volumes;
-it holds their existing passwords. `./scripts/lab help` lists commands.
+## Engineering references
 
-## Review the design
+- [Architecture](docs/architecture.md): request, storage, dispatch, processing and visible outcome.
+- [Design and decisions](docs/design.md): requirements, alternatives and actual delivery boundaries.
+- [Implementation reference](docs/implementation-guide.md): source/API map, log search and verification.
+- [AWS deployment](infra/terraform/README.md): prerequisites, mocked checks, bootstrap and preservation.
 
-- [Execution and recovery](docs/architecture.md): admission, concurrent processing and result rendering.
-- [AWS services and local counterparts](docs/aws-service-journey.md): responsibilities, connections and parity limits.
-- [Decisions](docs/decisions/0005-aws-service-journey.md): alternatives and consequences.
-- [Implementation reference](docs/implementation-guide.md): API, source map, log search and verification evidence.
-- [AWS deployment](infra/terraform/README.md): inputs, bootstrap, review/apply order and preservation.
-
-**Limits:** local HTTP, debug mode and single-node services are for synthetic data.
-Coverage measures document evidence, not candidate quality. OCR and DOCX are unsupported.
-Cloud deployment, failover, capacity, identity federation and model evaluation require their own acceptance evidence.
+**Limits:** local HTTP/debug and single-node services are restricted to synthetic data. Coverage measures source evidence, not candidate quality. OCR and DOCX are unsupported. Cloud deployment, failover, capacity, federation and model evaluation require separate acceptance evidence.

@@ -1,10 +1,10 @@
 # ADR 0006: durable originals and document lifecycle
 
-Status: accepted design; implementation and runtime verification pending. Supersedes the source-discard decision in ADR 0002 and the application-storage exclusion in ADR 0005.
+Status: accepted. Durable local processing and AWS configuration are implemented; local runtime and mocked-plan checks are verified. AWS is not deployed. Supersedes the source-discard decision in ADR 0002 and the application-storage exclusion in ADR 0005.
 
 ## Decision
 
-Keep exact PDF/TXT originals and UTF-8 snapshots of pasted input in private object storage. PostgreSQL owns document identity, owner, opaque object key, checksum, size/type, lifecycle, extraction version, expiry and comparison records. A comparison references a document; deleting a comparison keeps its reusable original. Existing source-cleared jobs remain readable with source unavailable; migration cannot recover discarded bytes.
+Keep exact PDF/TXT originals and UTF-8 snapshots of pasted input in private object storage. PostgreSQL owns document identity, owner, opaque object key, checksum, size/type, lifecycle, extraction version, expiry and comparison records. A comparison references a document; deleting an established comparison keeps its reusable original. Cancelling its unfinished initial upload instead leads to source cleanup. Existing source-cleared jobs remain readable with source unavailable; migration cannot recover discarded bytes.
 
 The API accepts bounded originals through the existing multipart endpoint. Reserve upload/document/job identity before object PUT; finalize queued work and its outbox only after storage confirmation. Replayed requests use the same reservation and exact-byte fingerprint. Interrupted uploads expire into durable cleanup intent. A successful S3 call is not a PostgreSQL transaction.
 
@@ -14,9 +14,9 @@ Document deletion first tombstones access and fences related work, then retries 
 
 ## Lifecycle policy
 
-The project defaults to 90 days for originals, extracted text and associated comparisons/results, with owner deletion available earlier. This duration is configurable project policy, not a universal enterprise or legal standard. Abandoned upload reservations expire after one hour. Rejected files are inaccessible and scheduled for deletion. Operational logs retain their existing three-day policy; cloud database backups retain the configured seven-day window and require restore-time deletion/expiry reconciliation. Tombstones retain only cleanup identifiers until deletion is confirmed; do not retain source indefinitely as an audit artifact.
+The project defaults to 90 days for originals, extracted text and associated comparisons/results, with owner deletion available earlier. This duration is configurable project policy, not a universal enterprise or legal standard. Abandoned upload reservations expire after one hour. Rejected files are inaccessible and scheduled for deletion. Local OpenObserve logs retain three days; configured CloudWatch logs retain 30 days. Cloud database backups retain the configured seven-day window and require restore-time deletion/expiry reconciliation before admission reopens. Cleanup-only tombstones remain for seven days after confirmed deletion, then reconciliation removes them; do not retain source indefinitely as an audit artifact.
 
-Use an unversioned originals bucket with immutable generated object keys. This avoids delete markers hiding retained historical versions; production backup/versioning changes must preserve erasure and recovery semantics. AWS lifecycle provides an expiry backstop; application expiry denies access and cleans relational derived data too. Infrastructure deletion never silently destroys retained documents.
+Use a newly created originals bucket without enabled versioning and with generated UUID object keys. The application treats source identity as immutable; this is not WORM storage or an IAM write-once guarantee against a compromised uploader role. This avoids delete markers hiding retained historical versions; production backup/versioning changes must preserve erasure and recovery semantics. AWS lifecycle provides an expiry backstop; application expiry denies access and cleans relational derived data too. Infrastructure deletion never silently destroys retained documents.
 
 ## Local and AWS boundaries
 

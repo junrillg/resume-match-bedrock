@@ -1,5 +1,7 @@
 # AWS deployment with an executable local counterpart
 
+Status: accepted for the service journey. Application-storage exclusion superseded by [ADR 0006](0006-durable-document-lifecycle.md).
+
 ## Context
 
 A reviewer needs the same submission, durable handoff and visible report across local
@@ -20,7 +22,10 @@ Keep supporting services beside this request path: ECR supplies images; Secrets 
 supplies startup configuration; IAM separates execution and worker permissions; KMS
 protects configured storage/secrets/logs; CloudWatch receives process logs. Private VPC
 endpoints support ECR, Secrets Manager, logs and Bedrock. ECR layers also require an S3
-gateway endpoint; this is not a document bucket. Three availability zones accommodate
+gateway endpoint. ADR 0006 adds a separate private originals bucket and extends that
+endpoint without removing ECR layer access. GuardDuty Malware Protection for S3 uses
+EventBridge notifications and protected scan tags; the application cannot forge clean
+status. Three availability zones accommodate
 the managed RabbitMQ cluster. Cloud failover remains unmeasured until deployment.
 
 Compose retains real PostgreSQL, RabbitMQ and OpenObserve. A separate local HTTP
@@ -35,10 +40,12 @@ SQS is a valid different design, but changing transport would require new visibi
 delivery and recovery semantics. A new named quorum queue avoids changing the type
 of an existing classic queue in place. Existing volumes and published history remain.
 
-CloudFront, application S3 storage, API Gateway, Cloud Map, Redis, Kafka and Step
-Functions add no required responsibility here. The document already has bounded
-temporary database retention; nginx and Django share an ECS task. Current LocalStack
-requires licensed authentication, so it is not the no-account local runtime.
+The original scope omitted application S3 storage because it retained only temporary
+database text. ADR 0006 supersedes that choice: reusable originals require private
+object storage plus database metadata/results and cross-store recovery. Compose uses
+SeaweedFS and ClamAV for this boundary; their behavior does not establish managed AWS
+parity. CloudFront, API Gateway, Cloud Map, Redis, Kafka and Step Functions remain
+omitted because they add no required responsibility to the selected flow.
 
 Terraform defines resources and application wiring separately under `infra/terraform/`.
 RDS manages its master password. A one-off bootstrap uses that identity to create a

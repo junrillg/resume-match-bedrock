@@ -4,11 +4,11 @@ flowchart TB
   accTitle: AWS supporting service responsibilities
   accDescr: Image startup, private networking, access and secret configuration, encryption, TLS and log operations support application tasks.
   ECR["<img src='aws/Arch_Amazon-Elastic-Container-Registry_64.svg' width='48' height='48'/><br/>ECR · image registry"] --> T["<img src='aws/Arch_Amazon-Elastic-Container-Service_64.svg' width='48' height='48'/><img src='aws/Arch_AWS-Fargate_64.svg' width='48' height='48'/><br/>ECS + Fargate · tasks"]
-  S3["<img src='aws/Arch_Amazon-Simple-Storage-Service_64.svg' width='48' height='48'/><br/>S3 gateway endpoint · ECR image layers"] --> T
+  S3["<img src='aws/Arch_Amazon-Simple-Storage-Service_64.svg' width='48' height='48'/><br/>S3 gateway endpoint · ECR layers + scoped document I/O"] --> T
   VPC["<img src='aws/Arch_Amazon-Virtual-Private-Cloud_64.svg' width='48' height='48'/><br/>VPC · subnets, routes, security groups"] -. "Constrain traffic" .-> T
   VPCE["<img src='aws/Arch_AWS-PrivateLink_64.svg' width='48' height='48'/><br/>PrivateLink · ECR, secrets, logs, Bedrock"] -. "Private service access" .-> T
-  IAM["<img src='aws/Arch_AWS-Identity-and-Access-Management_64.svg' width='48' height='48'/><br/>IAM · separate execution, worker, bootstrap roles"] -. "Authorize" .-> T
+  IAM["<img src='aws/Arch_AWS-Identity-and-Access-Management_64.svg' width='48' height='48'/><br/>IAM · separate execution, app, worker, relay, bootstrap and scan roles"] -. "Authorize" .-> T
   SEC["<img src='aws/Arch_AWS-Secrets-Manager_64.svg' width='48' height='48'/><br/>Secrets Manager · startup configuration"] -. "Inject selected secret values" .-> T
-  KMS["<img src='aws/Arch_AWS-Key-Management-Service_64.svg' width='48' height='48'/><br/>KMS · configured storage/secrets/log protection"]
+  KMS["<img src='aws/Arch_AWS-Key-Management-Service_64.svg' width='48' height='48'/><br/>KMS · S3/data/secrets/log protection"]
   ACM["<img src='aws/Arch_AWS-Certificate-Manager_64.svg' width='48' height='48'/><br/>ACM · ALB certificate"]
   T -. "Container stdout" .-> CW["<img src='aws/Arch_Amazon-CloudWatch_64.svg' width='48' height='48'/><br/>CloudWatch · retained logs + metric alarms"]

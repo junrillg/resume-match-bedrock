@@ -1,127 +1,79 @@
 # One comparison across AWS
 
-A reviewer submits a résumé and receives a durable receipt. Background work produces
-checked evidence; the browser reads the saved report. The service choices preserve
-those responsibilities while separating public entry, private processing and operations.
+The AWS design preserves the same seven business steps as local execution: a reviewer submits or reuses an original, background work validates evidence, and the browser reads a durable report. Original objects and application records have separate owners; neither a queue nor the model owns the result.
 
-![AWS request path: Route 53 resolves the endpoint, an ALB reaches the ECS/Fargate application, RDS commits admission, a relay publishes to Amazon MQ, a worker invokes Bedrock, then fences the RDS result for browser reads.](assets/enterprise-context.svg)
+![AWS request path and concurrent report reads using official service icons.](assets/enterprise-context.svg)
 
-The **1–7** numbers match the [local execution](architecture.md). Solid arrows carry
-requests or work; dashed arrows identify lookup or supporting relationships. Status
-reads begin after acceptance and can overlap relay and worker execution.
-**Local execution verified; AWS deployment defined in Terraform, not deployed.**
+**Local execution verified; AWS deployment defined and mock-plan checked, not deployed.** The [local architecture](architecture.md) and this view share **1 Submit · 2 Accept · 3 Relay · 4 Queue · 5 Process · 6 Save · 7 Read**.
 
-## 1–2 · Reach the application and accept work
+## 1–2 · Reach the application, store the original and admit
 
-**Route 53** answers the browser's DNS lookup with the load balancer address; it does
-not proxy the résumé. **ACM** supplies the certificate used by the **Application Load
-Balancer**, which terminates HTTPS and forwards healthy traffic to the application.
+Route 53 resolves the endpoint; it does not proxy documents. ACM supplies the ALB certificate. The HTTPS load balancer reaches a private ECS/Fargate task containing nginx and Django, which validates session, CSRF, ownership, limits and retry identity.
 
-**ECS** maintains application tasks on **Fargate**, which provides container compute.
-nginx serves React and proxies `/api/jobs/` to Gunicorn/Django over task-local localhost.
-Django checks session, CSRF, bounded input and retry identity. **RDS PostgreSQL** commits
-the job and outbox together before `202 Accepted` returns through the same HTTP path.
-The receipt means durable admission, not successful model processing.
+RDS PostgreSQL first records a new source reservation and upload lease. The application PUTs exact bytes into private S3, then commits pending document + queued job + outbox in RDS. Object storage and RDS are separate consistency boundaries. A concurrent `202 uploading` means reservation only; the finalized queued receipt confirms storage/admission. Reusing an owned source skips a new PUT.
+
+![S3, EventBridge, GuardDuty, application roles and RDS document-safety boundary.](assets/aws-document-gate.svg)
+
+S3 retains originals under generated `originals/` keys with SSE-KMS. S3 notifications reach EventBridge; GuardDuty Malware Protection for S3 manages its scan rule, reads new objects through its service role, and writes the scan-result tag. This is scanner integration, not an additional comparison queue. Application roles cannot forge the tag. A bucket policy denies original reads until `NO_THREATS_FOUND`, except the scanning role itself.
 
 ## 3–4 · Dispatch committed work
 
-A separate **ECS/Fargate relay** reads committed RDS outbox entries and publishes only
-the job UUID to **Amazon MQ for RabbitMQ** using TLS. The relay marks dispatch sent
-after confirmation; the worker may already receive delivery before that update commits.
+The Fargate relay reads the RDS outbox and publishes only the job UUID over TLS to Amazon MQ for RabbitMQ. Confirmation permits its sent marker; worker delivery may begin before that marker commits. The application declares the quorum queue; the managed broker spans three availability zones. RDS owns business state when confirmation or delivery repeats.
 
-Amazon MQ supplies managed RabbitMQ with the same AMQP responsibility as the local
-broker. The application declares `resume.match.quorum`; the AWS cluster spans three
-availability zones. Confirmation concerns broker acceptance, not report completion.
-RDS and reconciliation remain authoritative when publication or delivery repeats.
+## 5–6 · Verify source, extract evidence and save
 
-## 5–6 · Extract, check and save
+The Fargate worker obtains an RDS lease, checks the GuardDuty result, fetches S3 bytes and verifies size/SHA-256. Pending scan tags defer processing within the ten-minute job deadline without consuming provider-attempt budget. Failed, unsupported or inaccessible scans fail closed. A parser-version cache avoids repeated parsing; explicit reprocessing reads/parses the retained source again.
 
-The **ECS/Fargate worker** obtains a short RDS lease and calls **Amazon Bedrock Converse**
-through a **PrivateLink interface endpoint**. The bounded request carries document data,
-requested skills and safe correlation UUIDs. Bedrock returns proposed evidence to the
-worker; it does not write to RDS or decide the score.
+Only the worker invokes Bedrock Converse through PrivateLink. Bedrock returns proposed quotes; application code checks source/skill evidence, computes coverage and saves one report after verifying the current document and lease in RDS. Delivery and model calls may repeat, but a stale attempt cannot overwrite the committed result.
 
-Application code verifies source quotes. A second RDS transaction checks the current
-lease, calculates weighted coverage, saves one report and clears temporary source text.
-Transient failure has a finite retry/deadline budget; invalid evidence produces a safe
-failed state. Provider calls may repeat, even though committed reports remain unique.
+## 7 · Return the outcome and manage the source
 
-## 7 · Read the outcome
+React polls the owner-scoped jobs collection through the same HTTPS path. Django returns durable state and any saved report; React renders evidence or a safe failure category. Owners can retrieve a ready original through an authorized attachment response, reuse it, reprocess it, or request document deletion. Expiry and deletion fence access/work before the relay retries S3 cleanup. [Lifecycle policy →](document-lifecycle.md)
 
-React sends owner-scoped `GET /api/jobs/` through the same HTTPS entry. Django reads
-RDS state and returns status plus any completed report. React renders the score and
-quotes, or a safe failure category. It polls one request at a time while work is active;
-no model response is pushed directly to the browser.
+## Supporting responsibilities
 
-## What supports the path
+![AWS supporting relationships: launch, network, access, encryption and diagnostics.](assets/aws-support.svg)
 
-![Supporting AWS responsibilities grouped by launch, private connectivity, access protection and operations. These are dependencies rather than consecutive résumé-processing hops.](assets/aws-support.svg)
+| Role | Service and boundary |
+| --- | --- |
+| Launch | ECR supplies immutable application images. The shared S3 gateway endpoint preserves ECR layer access alongside narrowly scoped document operations. |
+| Private networking | VPC routes/security groups restrict peers and ports; PrivateLink reaches ECR, secrets, logs and Bedrock. No NAT or general internet egress is needed by the selected cloud scan design. |
+| Authorization | IAM separates execution, bootstrap, API upload/download, worker read/model, relay delete and scanner integration permissions. |
+| Configuration | Secrets Manager injects startup secrets. Bootstrap alone retrieves the RDS-managed master secret. |
+| Encryption | KMS protects configured objects, database, messaging, images, secrets and logs. S3-mediated permissions are constrained by service and object encryption context. |
+| Operations | CloudWatch receives safe container events and configured metric alarms. Optional existing SNS destinations deliver notifications. |
 
-| Responsibility | Service → next receiver | Why it is here |
-| --- | --- | --- |
-| Launch trusted images | **ECR** supplies application images to Fargate. The **S3 gateway endpoint** permits ECR's layer downloads. | Private tasks can start without a general internet egress route; there is no résumé S3 bucket. |
-| Connect privately | **VPC** subnets, routes and security groups restrict application, database and broker traffic. The internet gateway serves public ALB subnets; tasks remain private. **PrivateLink** endpoints reach ECR, secrets, logs and Bedrock. | Each connection has an explicit network destination and port. Endpoints do not replace IAM or TLS. |
-| Authorize actions | **IAM** separates task execution, worker invocation and one-off database bootstrap roles. | Image/secret/log permissions differ from the worker's model permission; the browser receives neither. |
-| Supply secrets | **Secrets Manager** provides configured values to task startup; bootstrap retrieves the RDS-managed master secret. | Normal application processes use a restricted database role; secret changes require the documented rollout. |
-| Protect storage | **KMS** keys protect the configured data, image repositories, secrets and logs. | Encryption access is granted to the service or role that needs it, not modeled as a new call for every form action. |
-| Diagnose and alert | **CloudWatch** receives container logs and the configured metric alarms. | Safe request/job IDs connect processing boundaries; persisted RDS state remains the business ledger. |
-
-Alarm notifications use optional existing SNS destinations; without them alarms remain
-visible in CloudWatch without sending notifications. DNS validation, certificate issuance,
-image publication, secret provisioning and database
-bootstrap happen before normal traffic. They are [deployment steps](../infra/terraform/README.md),
-not hidden request handlers. The [resource map](#implementation-and-terraform) identifies exact wiring.
+DNS/certificate validation, image publication, secret provisioning, scan-plan readiness and database bootstrap precede normal admission. They are [deployment dependencies](../infra/terraform/README.md), not invented sequential request hops.
 
 ## Local counterpart and limits
 
-| Business role | Local execution | AWS deployment | What local evidence does not prove |
+| Responsibility | Local | AWS | Unproven by local execution |
 | --- | --- | --- | --- |
-| 1–2 Entry/compute | Browser → loopback nginx → Django containers | Route 53 + ACM + ALB → ECS/Fargate task | Public DNS, certificate issuance, cloud ingress, scaling or federation |
-| 2/6/7 Durable ledger | Real PostgreSQL | RDS PostgreSQL | Managed backups/restoration, failover or cloud TLS connectivity |
-| 3–4 Dispatch | Relay + single-node RabbitMQ quorum queue | Relay task + three-zone Amazon MQ RabbitMQ cluster | Multi-node replication or zone failure recovery |
-| 5 Evidence API | boto3 → separate HTTP Converse contract service | Worker role → private Bedrock runtime | IAM, model quality, quotas, billing or managed inference |
-| Diagnostics | Safe OTLP events → searchable OpenObserve OSS | Container stdout → CloudWatch logs/alarms | Cloud log delivery, alert response or equivalent dashboards |
-| Supporting controls | Compose networking, ignored owner-only secrets, local images | VPC/endpoints, IAM, Secrets Manager, KMS and ECR | Managed access/encryption or deployment behavior |
+| Entry/compute | Loopback nginx + Django | Route 53/ACM/ALB + ECS/Fargate | Public TLS, scaling and federation |
+| Originals | Persistent SeaweedFS S3 API | Private S3 + SSE-KMS | Managed durability, IAM and lifecycle execution |
+| Malware gate | ClamAV daemon + definition checks | GuardDuty + EventBridge + clean tag | Same engine, tag timing or AWS enforcement |
+| Records/results | PostgreSQL | Multi-AZ RDS PostgreSQL | Restore, failover and real cloud TLS |
+| Delivery | Relay + single-node RabbitMQ quorum queue | Relay + three-zone Amazon MQ | Multi-node/zone recovery |
+| Evidence API | SDK → deterministic HTTP Converse service | Worker role → private Bedrock | Model quality, quotas, billing or managed inference |
+| Diagnostics | OTLP → OpenObserve | Stdout → CloudWatch/alarms | Equivalent dashboards or cloud ingestion |
 
-The local provider accepts the actual SDK's Converse request and returns deterministic
-literal evidence. It is neither a general AWS emulator nor an implementation of an LLM.
-UUID metadata correlates the provider's `provider.completed` event with API, relay and worker.
 ## Implementation and Terraform
 
 <details>
-<summary>Exact resource and application map</summary>
+<summary>Exact source and resource map</summary>
 
-Application links pin the verified runtime; infrastructure links pin the deployment
-configuration. A Bedrock model and delegated DNS zone are account-owned prerequisites;
-Terraform does not create a model or take over the parent zone.
-
-| Step / responsibility | Terraform definition | Application or wiring |
+| Boundary | Application | Terraform |
 | --- | --- | --- |
-| 1 DNS/TLS/entry | [DNS record](https://github.com/junrillg/resume-match-bedrock/blob/e2bfaa2d3302e7ea54beda759ba44d22cd05f03f/infra/terraform/ingress.tf#L57) · [ACM validation](https://github.com/junrillg/resume-match-bedrock/blob/e2bfaa2d3302e7ea54beda759ba44d22cd05f03f/infra/terraform/ingress.tf#L1) · [ALB/listener/target](https://github.com/junrillg/resume-match-bedrock/blob/e2bfaa2d3302e7ea54beda759ba44d22cd05f03f/infra/terraform/ingress.tf#L20) | [nginx proxy](https://github.com/junrillg/resume-match-bedrock/blob/4e9432e597d4d4d68cf8257110d4ca3f50cad0e4/frontend/nginx.conf#L40) |
-| 1–2/3/5 Compute | [aws_ecs_cluster.main](https://github.com/junrillg/resume-match-bedrock/blob/e2bfaa2d3302e7ea54beda759ba44d22cd05f03f/infra/terraform/compute.tf#L68) · [aws_ecs_task_definition.service / aws_ecs_service.main](https://github.com/junrillg/resume-match-bedrock/blob/e2bfaa2d3302e7ea54beda759ba44d22cd05f03f/infra/terraform/compute.tf#L75) | [images, commands and task-local proxy](https://github.com/junrillg/resume-match-bedrock/blob/e2bfaa2d3302e7ea54beda759ba44d22cd05f03f/infra/terraform/compute.tf#L1) |
-| 2/6/7 Durable ledger | [aws_db_instance.main + TLS parameter/subnet groups](https://github.com/junrillg/resume-match-bedrock/blob/e2bfaa2d3302e7ea54beda759ba44d22cd05f03f/infra/terraform/data.tf#L46) | [admission](https://github.com/junrillg/resume-match-bedrock/blob/4e9432e597d4d4d68cf8257110d4ca3f50cad0e4/backend/matching/views.py#L153) · [fenced completion](https://github.com/junrillg/resume-match-bedrock/blob/4e9432e597d4d4d68cf8257110d4ca3f50cad0e4/backend/matching/jobs.py#L65) |
-| 3–4 Messaging | [aws_mq_broker.main](https://github.com/junrillg/resume-match-bedrock/blob/e2bfaa2d3302e7ea54beda759ba44d22cd05f03f/infra/terraform/data.tf#L88) | [queue declaration](https://github.com/junrillg/resume-match-bedrock/blob/4e9432e597d4d4d68cf8257110d4ca3f50cad0e4/backend/config/celery.py#L11) · [publish/confirm](https://github.com/junrillg/resume-match-bedrock/blob/4e9432e597d4d4d68cf8257110d4ca3f50cad0e4/backend/matching/jobs.py#L147) |
-| 5 Model access | [aws_vpc_endpoint.bedrock](https://github.com/junrillg/resume-match-bedrock/blob/e2bfaa2d3302e7ea54beda759ba44d22cd05f03f/infra/terraform/network.tf#L172) · [aws_iam_role_policy.bedrock](https://github.com/junrillg/resume-match-bedrock/blob/e2bfaa2d3302e7ea54beda759ba44d22cd05f03f/infra/terraform/identity.tf#L37) | [Converse request/client](https://github.com/junrillg/resume-match-bedrock/blob/4e9432e597d4d4d68cf8257110d4ca3f50cad0e4/backend/matching/services.py#L141) · [local HTTP operation](https://github.com/junrillg/resume-match-bedrock/blob/4e9432e597d4d4d68cf8257110d4ca3f50cad0e4/backend/local_converse.py#L43) |
-| Network | [VPC, gateway, subnets, routes and security groups](https://github.com/junrillg/resume-match-bedrock/blob/e2bfaa2d3302e7ea54beda759ba44d22cd05f03f/infra/terraform/network.tf#L5) · [service/S3 endpoints](https://github.com/junrillg/resume-match-bedrock/blob/e2bfaa2d3302e7ea54beda759ba44d22cd05f03f/infra/terraform/network.tf#L163) | [private task wiring](https://github.com/junrillg/resume-match-bedrock/blob/e2bfaa2d3302e7ea54beda759ba44d22cd05f03f/infra/terraform/compute.tf#L97) |
-| Images | [aws_ecr_repository.image](https://github.com/junrillg/resume-match-bedrock/blob/e2bfaa2d3302e7ea54beda759ba44d22cd05f03f/infra/terraform/data.tf#L112) | [immutable digest references](https://github.com/junrillg/resume-match-bedrock/blob/e2bfaa2d3302e7ea54beda759ba44d22cd05f03f/infra/terraform/compute.tf#L1) |
-| Identity and secrets | [execution / task roles](https://github.com/junrillg/resume-match-bedrock/blob/e2bfaa2d3302e7ea54beda759ba44d22cd05f03f/infra/terraform/identity.tf#L13) · [aws_secretsmanager_secret.app](https://github.com/junrillg/resume-match-bedrock/blob/e2bfaa2d3302e7ea54beda759ba44d22cd05f03f/infra/terraform/data.tf#L22) | [bootstrap_cloud_db.Command.handle](https://github.com/junrillg/resume-match-bedrock/blob/e2bfaa2d3302e7ea54beda759ba44d22cd05f03f/backend/matching/management/commands/bootstrap_cloud_db.py#L18) |
-| Encryption | [aws_kms_key.main](https://github.com/junrillg/resume-match-bedrock/blob/e2bfaa2d3302e7ea54beda759ba44d22cd05f03f/infra/terraform/data.tf#L1) | [encrypted RDS, MQ, repositories and logs](https://github.com/junrillg/resume-match-bedrock/blob/e2bfaa2d3302e7ea54beda759ba44d22cd05f03f/infra/terraform/data.tf#L33) |
-| Logs/alarms | [service/database log groups](https://github.com/junrillg/resume-match-bedrock/blob/e2bfaa2d3302e7ea54beda759ba44d22cd05f03f/infra/terraform/data.tf#L33) · [metric filters, alarms and saved query](https://github.com/junrillg/resume-match-bedrock/blob/e2bfaa2d3302e7ea54beda759ba44d22cd05f03f/infra/terraform/monitoring.tf#L1) | [safe emit](https://github.com/junrillg/resume-match-bedrock/blob/4e9432e597d4d4d68cf8257110d4ca3f50cad0e4/backend/matching/telemetry.py#L66) |
+| Entry/admission | [admit_jobs / document_download](https://github.com/junrillg/resume-match-bedrock/blob/4c8e18a5c544e142a604336c1c47cf415e90818e/backend/matching/views.py) · route declarations in `backend/config/urls.py` | [ingress.tf](https://github.com/junrillg/resume-match-bedrock/blob/3c05f3fc26d3c838b246eea17c02f0027b91e98f/infra/terraform/ingress.tf) · [compute.tf](https://github.com/junrillg/resume-match-bedrock/blob/3c05f3fc26d3c838b246eea17c02f0027b91e98f/infra/terraform/compute.tf) |
+| Object/scanner access | [source and scanner adapter](https://github.com/junrillg/resume-match-bedrock/blob/4c8e18a5c544e142a604336c1c47cf415e90818e/backend/matching/documents.py) | [documents.tf](https://github.com/junrillg/resume-match-bedrock/blob/3c05f3fc26d3c838b246eea17c02f0027b91e98f/infra/terraform/documents.tf): originals bucket, policies, scan role/plan and notifications |
+| Metadata/leases/results | [Document / Job / Match](https://github.com/junrillg/resume-match-bedrock/blob/4c8e18a5c544e142a604336c1c47cf415e90818e/backend/matching/models.py) · [relay_once / run_job / finish_job](https://github.com/junrillg/resume-match-bedrock/blob/4c8e18a5c544e142a604336c1c47cf415e90818e/backend/matching/jobs.py) | [data.tf](https://github.com/junrillg/resume-match-bedrock/blob/3c05f3fc26d3c838b246eea17c02f0027b91e98f/infra/terraform/data.tf): RDS and MQ |
+| Queue declaration | `backend/config/celery.py` | [data.tf](https://github.com/junrillg/resume-match-bedrock/blob/3c05f3fc26d3c838b246eea17c02f0027b91e98f/infra/terraform/data.tf): three-zone MQ |
+| Model boundary | [Converse / evidence validation](https://github.com/junrillg/resume-match-bedrock/blob/4c8e18a5c544e142a604336c1c47cf415e90818e/backend/matching/services.py) | `identity.tf` worker model grant and `network.tf` Bedrock endpoint |
+| Network/identity | `backend/config/settings.py` cloud TLS/config | [network.tf](https://github.com/junrillg/resume-match-bedrock/blob/3c05f3fc26d3c838b246eea17c02f0027b91e98f/infra/terraform/network.tf) · [identity.tf](https://github.com/junrillg/resume-match-bedrock/blob/3c05f3fc26d3c838b246eea17c02f0027b91e98f/infra/terraform/identity.tf) |
+| Logs | [allowlisted emit](https://github.com/junrillg/resume-match-bedrock/blob/4c8e18a5c544e142a604336c1c47cf415e90818e/backend/matching/telemetry.py) | `monitoring.tf` and `data.tf` log groups |
 
 </details>
 
-The [deployment runbook](../infra/terraform/README.md) covers account-owned prerequisites,
-image and secret preparation, bootstrap, protected remote state, plan/apply review and
-endpoint smoke checks. Format/schema and mocked-plan checks validate configuration,
-not a successful AWS deployment. Cloud deployment and model behavior remain unmeasured.
+The [deployment runbook](../infra/terraform/README.md) covers real-account prerequisites, protected state, images, bootstrap, ACTIVE scanner checks, enablement and preservation. Mocked plans verify configuration invariants, not actual IAM enforcement or scan operation. Capacity, managed failover, restore-time deletion reconciliation, alert ownership and model evaluation remain deployment acceptance work.
 
-## Deliberate omissions
-
-No CloudFront or API Gateway is required by this single same-origin ALB entry. nginx
-and Django share an ECS task, so Cloud Map adds no needed discovery. Temporary bounded
-source text already belongs to the job transaction; no document bucket is needed.
-Redis adds no demonstrated cache role; Kafka has no retained-stream/replay consumer;
-Step Functions would duplicate the existing persisted job lifecycle.
-
-See [the decision](decisions/0005-aws-service-journey.md), [research](research.md) and
-[recovery sequence](architecture.md#failure-and-recovery) for the guarantees and tradeoffs.
+Redis, Kafka and Step Functions have no additional required responsibility in this flow. CloudFront, API Gateway and Cloud Map are also omitted deliberately. S3 originals are an implemented design addition under [ADR 0006](decisions/0006-durable-document-lifecycle.md), superseding the earlier storage exclusion in [ADR 0005](decisions/0005-aws-service-journey.md).

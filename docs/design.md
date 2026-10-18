@@ -1,125 +1,60 @@
-# Start here: one résumé review, end to end
+# Résumé review design
 
-A reviewer submits a résumé and weighted skill requirements. Extracting evidence may
-involve a slow or unavailable model. The application should accept durable work quickly,
-show progress, survive delivery failures and commit one result for a logical submission.
-It should also make that journey visible without logging document contents.
+The system preserves an uploaded original, processes comparisons independently of the browser and returns checked evidence with an application-owned score. Its core boundaries are durable source storage, recoverable dispatch, fenced results and owner-controlled retrieval/deletion.
 
-We designed this system around one authenticated résumé review flow, with durable
-background processing and inspectable evidence. Docker Compose runs the complete
-architecture locally; the single-node deployment has no production cluster or HA.
+![Seven-step local execution and concurrent result reads.](assets/architecture.svg)
 
-## Vocabulary before services
+## Requirements and data ownership
 
-- **Job:** a durable record of one requested comparison and its current state.
-- **Queue:** a broker's delivery mechanism for work; it does not own the business result.
-- **Outbox:** a database record saying committed work still needs to be published.
-- **Relay:** the process that publishes outbox entries and reconciles interrupted jobs.
-- **Lease:** a temporary right for one attempt to finish a job; a token rejects stale attempts.
-- **Idempotency:** repeating delivery/admission does not create another committed result.
-- **Telemetry:** diagnostic events about work, with safe IDs instead of document content.
+| Input or record | Contract / owner |
+| --- | --- |
+| Original | PDF/TXT up to 1 MiB; pasted UTF-8 snapshot; private object storage retains exact bytes |
+| Document record | PostgreSQL owns account, generated key, checksum, media type, lifecycle and expiry |
+| Extraction | Up to 10 PDF pages / 30,000 characters; PostgreSQL cache records parser version |
+| Comparison | 1–20 unique weighted requirements; PostgreSQL job/outbox/result records |
+| Access | Authenticated owner, CSRF on browser mutations, clean-only attachment download |
+| Retention | Configurable 90-day policy for documents/derived results; earlier owner deletion |
 
-## Design inputs and boundaries
+These are project requirements, not industry capacity targets. Admission permits 20 logical jobs per owner per UTC day. Account isolation is implemented; organization tenancy and federated identity are separate deployment requirements. No automated hiring decision is made.
 
-One bounded PDF/TXT or pasted résumé, up to 1 MiB / 10 PDF pages / 30,000 characters,
-is compared against 1–20 explicit weighted requirements. These are actual application
-limits, not measured industry capacity targets. The account quota is 20 logical jobs
-per UTC day. Work has a finite deadline and attempt budget. The caller owns its jobs
-and reports. This is user isolation, not a complete organization/tenant authorization model.
+## Flow and consistency
 
-The separate local HTTP Converse contract service supplies deterministic evidence.
-The AWS Terraform deployment preserves the same business boundaries with managed
-ingress, private compute/data/messaging and Bedrock access. Local execution and AWS deployment evidence are reported separately.
-No automatic hiring decision is made.
+Steps **1 Submit · 2 Accept · 3 Relay · 4 Queue · 5 Process · 6 Save · 7 Read** are shared across the [architecture](architecture.md), [document lifecycle](document-lifecycle.md) and [AWS journey](aws-service-journey.md).
 
-## Intended flow
+New-source admission has three boundaries: reserve document/job identity in PostgreSQL; PUT the original; then commit pending document + queued job + outbox together. The object service and database do not share a transaction. Reserved-upload identity, leases, deadlines and reconciliation close partial-write/deletion failures. A concurrent replay can return `202 uploading`; only a finalized queued receipt confirms stored source. Saved-source reuse queues another comparison without uploading again.
 
-1. **Submit:** React sends the selected document, requirements and retry key through nginx.
-2. **Accept:** Django validates the session/input; PostgreSQL commits job and outbox together before the receipt.
-3. **Relay:** read committed intent, publish only the job UUID and mark sent after broker confirmation.
-4. **Queue:** RabbitMQ retains the persistent wakeup on the declared quorum queue.
-5. **Process:** a leased worker calls the HTTP evidence provider outside the claim transaction, then validates its proposals.
-6. **Save:** check the current lease, compute weighted coverage, commit one report and clear temporary source.
-7. **Read:** React polls owner-scoped status and renders the report or a safe error.
+After commit, the relay publishes only a UUID. The worker fetches verified source, passes the malware gate, parses or reuses matching extraction, calls the evidence provider, validates quotes, and saves a fenced score/result. Browser reads overlap those processes. At-least-once delivery and provider calls can repeat; the database permits one committed report per job.
 
-Safe structured events connect the processes in OpenObserve. Reads overlap background
-work; delivery and extraction calls can repeat. The [architecture](architecture.md)
-shows execution, recovery and evidence; the [AWS journey](aws-service-journey.md) maps
-the same responsibilities to the selected managed services.
+## Service choices
 
-## Where failure changes the flow
-
-Broker unavailable: the API can still commit a job/outbox; the relay retries delivery.
-Duplicate messages: only one valid claim/result is allowed. A crashed or stale worker:
-lease/deadline reconciliation can schedule another bounded attempt, and the old token
-cannot overwrite it. Exhaustion or deadline: a visible terminal failure replaces endless
-retries. Telemetry unavailable: business processing continues with bounded diagnostic loss.
-
-Résumé text is retained temporarily while queued/running and cleared at terminal state
-or deletion. Persisted quotes can still contain personal data. Production backup/log
-retention, SSO, organization tenancy, ingress/TLS, malware scanning and HA require their
-own operational design. See the [data and AI decision](decisions/0002-evidence-and-data-boundaries.md).
-
-## Service responsibilities and decisions
-
-| Component | One responsibility | Decision |
+| Responsibility | Local service | Decision |
 | --- | --- | --- |
-| nginx + React | Same-origin entry point and progress/evidence UI | [Local runtime](decisions/0003-container-runtime.md) |
-| Django API | Authorized, validated, idempotent work admission | [Background work](decisions/0001-durable-background-work.md) |
-| PostgreSQL | Source of truth for jobs, outbox and results | [Background work](decisions/0001-durable-background-work.md) |
-| Relay + RabbitMQ + worker | Reliable delivery and independent processing | [Background work](decisions/0001-durable-background-work.md) |
-| HTTP Converse service / Bedrock adapter | Propose evidence; never own the score | [Evidence boundary](decisions/0002-evidence-and-data-boundaries.md) |
-| OpenObserve + OTLP exporter | Search safe lifecycle events across processes | [Observability](decisions/0004-searchable-observability.md) |
+| Entry and owner access | React/nginx + Django | [Runtime](decisions/0003-container-runtime.md) |
+| Originals and integrity | SeaweedFS S3-compatible storage | [Durable lifecycle](decisions/0006-durable-document-lifecycle.md) |
+| Metadata, state and results | PostgreSQL | [Background work](decisions/0001-durable-background-work.md) |
+| Delivery and reconciliation | Relay + RabbitMQ + Celery worker | [Background work](decisions/0001-durable-background-work.md) |
+| Untrusted-file gate | ClamAV locally; GuardDuty in AWS design | [Durable lifecycle](decisions/0006-durable-document-lifecycle.md) |
+| Proposed evidence | Separate HTTP Converse service / Bedrock | [Evidence boundary](decisions/0002-evidence-and-data-boundaries.md) |
+| Correlated diagnostics | OpenObserve + bounded OTLP export | [Observability](decisions/0004-searchable-observability.md) |
 
-## Ordered build and verification plan
+Redis has no required caching role; Kafka has no retained-stream consumer here. Business scope stays small while storage/recovery/access mechanisms remain complete for the stated flow.
 
-The initial synchronous baseline already exists; its history is preserved. The Docker
-foundation is verified in commit `6dbaf577e0e2a9188fe40c66f0e3f2e529a4e037`.
-The queue milestone is verified in commit `4456c3214871f46ee47e84f6add9f98dcf54f2d5`.
-The job-aware UI is verified in commit `44b0d1e` (15 frontend tests and real queued-to-result UI check).
-Searchable logs and runtime recovery are verified in commit `a79e75e702431878b684b5b2f7aa719a5eacab2c`.
-This design package records the researched
-choices before the remaining UI and observability implementation at that point in history, without backdating it.
+## Failure boundaries
 
-| Milestone | Components | Observable check |
-| --- | --- | --- |
-| Docker foundation | Dockerfiles, Compose, startup helper, database | One command starts healthy services; login/sample works on PostgreSQL. |
-| Durable job processing | Job/outbox API, relay, worker, recovery | Broker outage retains work; restart completes one result; concurrency tests fence duplicates. |
-| Job-aware UI | React submission, polling, queued/terminal states | Real HTTP admission and state progression; source/drafts stay isolated on auth loss. |
-| Searchable observability | Structured events, OTLP export, OSS viewer | Query one job across services; sensitive fields absent; viewer outage does not stop work. |
-| Architecture documentation | Numbered diagrams, code map, implementation reference and ADRs | Service boundaries, failure guarantees and operating checks can be traced to source. |
+Object outage leaves recoverable upload identity, not a processable missing source. Broker outage leaves durable outbox intent. Pending cloud scans defer provider work within the job deadline; failed/unavailable scanning fails closed. Token checks prevent stale completion. Document deletion/expiry denies access and fences related work before retried object cleanup. Diagnostics can fail without failing business processing.
 
-Each implementation milestone includes its boundary checks before its real commit/push.
-See [research sources](research.md), [the architecture](architecture.md), then the
-[implementation reference](implementation-guide.md).
+The [lifecycle reference](document-lifecycle.md) defines source and derived-data cleanup, the seven-day cloud backup window, and restore-time reconciliation. Local logs retain three days; configured CloudWatch logs retain 30 days. Malware scanning reduces risk, and retained evidence can still be personal data.
 
-## AWS delivery sequence
+## Delivery record
 
-The [AWS service decision](decisions/0005-aws-service-journey.md) records the researched
-topology, alternatives, local counterpart and deployment limits before implementation.
+Existing history is preserved. Research and ADR 0006 were committed before the durable-storage changes; subsequent verified milestones are recorded with their actual commits in the [implementation reference](implementation-guide.md#actual-build-history). The source-retention portions of ADRs 0002/0005 are superseded; their earlier decisions remain traceable.
 
-| Milestone | Scope | Observable acceptance |
-| --- | --- | --- |
-| Design | AWS service responsibilities, local parity and ordered delivery | Reviewed decision and plan committed first. |
-| Local/provider and transport | Separate HTTP Converse service, SDK endpoint, quorum queue, cloud TLS/proxy configuration, Impeccable UI clarification | Real Compose request returns a report through the HTTP provider; relevant boundary tests and UI/build checks pass. |
-| Deployment | Terraform network, ingress, ECS roles/tasks, RDS, MQ, model access, secrets and logs; bootstrap/runbook | Format/init/schema and credential-free mocked plan assertions pass; no real AWS deployment claimed. |
-| Architecture communication | Official-icon service views, parity crosswalk, operating evidence and service-by-service overview | Endpoint → durable work → provider → report can be followed without opening implementation files. |
+| Durable-document milestone | Acceptance |
+| --- | --- |
+| Research/design | Primary sources, data inventory and lifecycle/recovery decision |
+| Local processing | Real object/scanner flow, PostgreSQL isolation/concurrency, outage and cleanup checks |
+| AWS configuration | Private S3/scanner/IAM/endpoint/KMS wiring and mocked plan assertions |
+| Document UI | Source selection, authorized download/reprocess/deletion and verified status/error states |
+| Architecture communication | Matching diagrams, source links, operating contracts and evidence |
 
-Each implementation milestone is verified and committed before the next. Existing
-runtime evidence is reused only where source/configuration and the guarantee remain
-unchanged. The model contract service, managed-service TLS and deployment wiring need
-new evidence. Three-zone AWS resilience is a deployment requirement, not a local result.
-
-## Durable document delivery sequence
-
-[ADR 0006](decisions/0006-durable-document-lifecycle.md) replaces the earlier source-discard scope. The following milestones are planned before implementation; earlier delivery history remains unchanged.
-
-| Milestone | Scope | Observable acceptance |
-| --- | --- | --- |
-| Storage design | Data inventory, original/record split, retention, security and recovery decisions | Primary-source research and this decision committed first. |
-| Durable processing | Document metadata/migration, S3 client, storage/scanner Compose services, admission/recovery, authorized download/reuse/reprocess/delete | Real SDK byte roundtrip, existing PostgreSQL tests, scan rejection, outage/recovery, persistence and deletion fencing. |
-| Cloud wiring | Private S3 and role/endpoint/KMS/lifecycle policies; scanner deployment/update requirements | Terraform format/schema and credential-free mock plans; no live cloud call. |
-| Document UI | Saved-source selection, download, reprocess and deletion with clear retention/status | Focused UI tests/build and desktop/mobile browser checks under the existing design. |
-| Architecture communication | Revised user-to-storage-to-worker-to-result diagrams and operating evidence | Public diagrams/links reflect shipped behavior and every material limit. |
-
-The changed flow is planned until those implementation milestones are verified. Exact files and evidence will be recorded with each milestone; documentation alone is not a working storage integration.
+The [research](research.md) supports these choices. Passing local checks and mocked Terraform plans does not certify cloud operation, high availability or universal production readiness.

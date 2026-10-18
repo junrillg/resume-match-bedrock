@@ -5,10 +5,16 @@ flowchart TB
   accDescr: Terraform-defined AWS deployment, not deployed. DNS is lookup; polling overlaps processing. Supporting services are a separate view.
   DNS["<img src='aws/Arch_Amazon-Route-53_64.svg' width='48' height='48'/><br/>1 Route 53 · resolve endpoint"] -. "ALB address" .-> ALB["<img src='aws/Res_Elastic-Load-Balancing_Application-Load-Balancer_48.svg' width='48' height='48'/><br/>1 ALB · HTTPS using ACM certificate"]
   ALB --> APP["<img src='aws/Arch_Amazon-Elastic-Container-Service_64.svg' width='48' height='48'/><img src='aws/Arch_AWS-Fargate_64.svg' width='48' height='48'/><br/>1–2 ECS/Fargate app<br/>nginx → localhost Django"]
-  APP --> DB["<img src='aws/Arch_Amazon-RDS_64.svg' width='48' height='48'/><br/>2 RDS PostgreSQL<br/>Job + Outbox transaction"]
+  APP --> DB["<img src='aws/Arch_Amazon-RDS_64.svg' width='48' height='48'/><br/>2 RDS PostgreSQL<br/>Reserve → S3 → queued job/outbox"]
+  APP --> S3["<img src='aws/Arch_Amazon-Simple-Storage-Service_64.svg' width='48' height='48'/><br/>2.2 Private S3 originals"]
+  S3 -. "Object-created notification" .-> EV["<img src='aws/Arch_Amazon-EventBridge_64.svg' width='48' height='48'/><br/>EventBridge · managed scanner integration"]
+  EV -. "GuardDuty managed rule" .-> GD["<img src='aws/Arch_Amazon-GuardDuty_64.svg' width='48' height='48'/><br/>GuardDuty · scan and tag new original"]
+  GD -. "Clean-result tag" .-> S3
+  S3 -->|"PUT confirmation; finalize RDS admission"| APP
   DB --> R["<img src='aws/Arch_AWS-Fargate_64.svg' width='48' height='48'/><br/>3 Fargate relay"] --> MQ["<img src='aws/Arch_Amazon-MQ_64.svg' width='48' height='48'/><br/>4 Amazon MQ · RabbitMQ quorum"]
   MQ --> W["<img src='aws/Arch_AWS-Fargate_64.svg' width='48' height='48'/><br/>5 Worker · claim lease"]
-  W -->|"Private Converse"| B["<img src='aws/Arch_Amazon-Bedrock_64.svg' width='48' height='48'/><br/>5 Bedrock · propose evidence"]
+  W -->|"5.1 Read tag, then clean-only GET + checksum"| S3
+  W -->|"5.2 Parse/cache, then private Converse"| B["<img src='aws/Arch_Amazon-Bedrock_64.svg' width='48' height='48'/><br/>5 Bedrock · propose evidence"]
   B -->|"Evidence response"| W
   W -->|"6 Validate, fence, score + save"| DB
   U["7 React read + render"] -. "HTTPS entry → owner query" .-> APP

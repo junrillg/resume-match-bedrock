@@ -1,0 +1,9 @@
+flowchart TD
+  A["Django on Fargate: reserve RDS identity"] --> B["Private S3: acknowledge original PUT"]
+  B --> C["S3 EventBridge integration"]
+  C --> D["GuardDuty Malware Protection for S3"]
+  D --> E["Same S3 object: clean scan tag gates reads"]
+  E --> F["Fargate worker: verify checksum, parse, extract, validate"]
+  F --> G["RDS PostgreSQL: fence lease and save report"]
+  G --> H["Browser: owner-scoped GET through Django"]
+  E --> I["Owner original download through Django"]

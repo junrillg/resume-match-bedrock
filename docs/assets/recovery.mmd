@@ -8,7 +8,8 @@ sequenceDiagram
   participant Q as RabbitMQ
   participant W as Worker
   U->>A: POST job + idempotency key
-  A->>D: Atomic Job + Outbox
+  Note over A,D: New original PUT already confirmed
+  A->>D: Finalize queued Job + Outbox
   D-->>A: Commit
   A-->>U: 202 queued + IDs
   R->>D: Read unsent dispatch
@@ -19,7 +20,7 @@ sequenceDiagram
   R->>D: Mark dispatch sent
   Q->>W: UUID delivery can repeat
   W->>D: Short locked claim + lease token
-  Note over W: Extract + validate<br/>Outside transaction
+  Note over W: Fetch, scan, extract + validate<br/>Outside transaction
   W->>D: Current token? Score + one result + terminal state
   W-->>Q: Acknowledge completion
   U->>A: GET job status
