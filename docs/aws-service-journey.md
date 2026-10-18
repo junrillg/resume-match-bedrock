@@ -2,7 +2,7 @@
 
 The AWS design preserves the same seven business steps as local execution: a reviewer submits or reuses an original, background work validates evidence, and the browser reads a durable report. Original objects and application records have separate owners; neither a queue nor the model owns the result.
 
-![AWS request path and concurrent report reads using official service icons.](assets/enterprise-context.svg)
+![AWS request path and concurrent report reads using official service icons.](assets/enterprise-context.svg?v=durable-originals-20261018)
 
 **Local execution verified; AWS deployment defined and mock-plan checked, not deployed.** The [local architecture](architecture.md) and this view share **1 Submit · 2 Accept · 3 Relay · 4 Queue · 5 Process · 6 Save · 7 Read**.
 
@@ -12,7 +12,7 @@ Route 53 resolves the endpoint; it does not proxy documents. ACM supplies the AL
 
 RDS PostgreSQL first records a new source reservation and upload lease. The application PUTs exact bytes into private S3, then commits pending document + queued job + outbox in RDS. Object storage and RDS are separate consistency boundaries. A concurrent `202 uploading` means reservation only; the finalized queued receipt confirms storage/admission. Reusing an owned source skips a new PUT.
 
-![S3, EventBridge, GuardDuty, application roles and RDS document-safety boundary.](assets/aws-document-gate.svg)
+![S3, EventBridge, GuardDuty, application roles and RDS document-safety boundary.](assets/aws-document-gate.svg?v=durable-originals-20261018)
 
 S3 retains originals under generated `originals/` keys with SSE-KMS. S3 notifications reach EventBridge; GuardDuty Malware Protection for S3 manages its scan rule, reads new objects through its service role, and writes the scan-result tag. This is scanner integration, not an additional comparison queue. Application roles cannot forge the tag. A bucket policy denies original reads until `NO_THREATS_FOUND`, except the scanning role itself.
 
@@ -32,7 +32,7 @@ React polls the owner-scoped jobs collection through the same HTTPS path. Django
 
 ## Supporting responsibilities
 
-![AWS supporting relationships: launch, network, access, encryption and diagnostics.](assets/aws-support.svg)
+![AWS supporting relationships: launch, network, access, encryption and diagnostics.](assets/aws-support.svg?v=durable-originals-20261018)
 
 | Role | Service and boundary |
 | --- | --- |
