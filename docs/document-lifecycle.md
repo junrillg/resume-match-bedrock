@@ -33,15 +33,9 @@ A matching parser version can reuse extracted text, but each comparison still ve
 
 ## Deletion and expiry
 
-```mermaid
-flowchart TB
-  A[Owner delete or expiry] --> B[Lock document; tombstone access]
-  B --> C[Remove derived content; fence related jobs]
-  C --> D[Relay retries object DELETE]
-  D -->|Failure| D
-  D -->|Confirmed after upload lease| E[Clear source metadata; mark deleted]
-  E --> F[Remove cleanup tombstone after seven days]
-```
+![Deletion and expiry: tombstone access, fence work, retry object deletion, clear metadata and eventually remove the cleanup tombstone.](https://raw.githubusercontent.com/junrillg/resume-match-bedrock/d5dbc6e9d22999b50ca3c7737e25b063ce206f74/docs/assets/document-deletion.svg)
+
+[Diagram source](assets/document-deletion.mmd)
 
 An established comparison can be deleted independently while its reusable document remains. Cancelling its initial unfinished upload is different: a late successful PUT or expired upload reservation causes source cleanup. The application does not publish work for an unready original.
 
