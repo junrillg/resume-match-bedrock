@@ -1,11 +1,11 @@
 :root { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: #172b35; background: #f6f5ef; font-synthesis: none; font-weight: 400; line-height: 1.5; --muted: #5d6c70; --teal: #17665f; --line: #d8ded8; }
 * { box-sizing: border-box; }
 body { margin: 0; }
-button, input, textarea { font: inherit; }
-button, a, input, textarea { -webkit-tap-highlight-color: transparent; }
+button, input, textarea, select { font: inherit; }
+button, a, input, textarea, select { -webkit-tap-highlight-color: transparent; }
 button { cursor: pointer; }
 button:disabled { cursor: not-allowed; opacity: .55; }
-button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px solid #3c8b80; outline-offset: 3px; }
+button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 3px solid #3c8b80; outline-offset: 3px; }
 a { color: inherit; }
 button { transition: background .15s ease, border-color .15s ease; }
 .skip-link { position: absolute; z-index: 4; top: -60px; left: 16px; padding: 12px; background: white; }
@@ -37,8 +37,8 @@ h2 { font-size: 23px; line-height: 1.25; letter-spacing: -.65px; margin: 0; font
 h3 { margin: 0; font-size: 14px; font-weight: 600; }
 p { margin: 0 0 12px; }
 label { display: block; font-size: 12px; font-weight: 600; margin-bottom: 7px; }
-input:not([type=radio]), textarea { width: 100%; border: 1px solid #7d8d82; border-radius: 3px; padding: 11px 12px; color: #172b35; background: #fffefa; font-size: 13px; }
-input:not([type=radio]):hover, textarea:hover { border-color: #586f60; }
+input:not([type=radio]):not([type=checkbox]), textarea { width: 100%; border: 1px solid #7d8d82; border-radius: 3px; padding: 11px 12px; color: #172b35; background: #fffefa; font-size: 13px; }
+input:not([type=radio]):not([type=checkbox]):hover, textarea:hover { border-color: #586f60; }
 input::placeholder, textarea::placeholder { color: #5d6c70; }
 textarea { resize: vertical; line-height: 1.65; min-height: 190px; }
 fieldset { border: 0; border-top: 1px solid var(--line); margin: 0 0 26px; padding: 22px 0 0; min-width: 0; }
@@ -56,7 +56,7 @@ fieldset { border: 0; border-top: 1px solid var(--line); margin: 0 0 26px; paddi
 .text-button span { margin-left: 4px; }
 .add-skill { margin-top: 7px; }
 .muted { color: var(--muted); font-weight: 400; }
-.source-options { display: flex; gap: 24px; margin: 0 0 16px; }
+.source-options { display: flex; flex-wrap: wrap; gap: 24px; margin: 0 0 16px; }
 .source-options label { display: flex; align-items: center; gap: 6px; margin: 0; font-weight: 500; }
 input[type=radio] { accent-color: var(--teal); margin: 0; width: 15px; height: 15px; }
 .input-meta { display: flex; justify-content: space-between; gap: 14px; color: var(--muted); font-size: 10px; margin: 6px 0 0; }
@@ -142,3 +142,20 @@ blockquote { border-left: 2px solid #9bb7a0; margin: 14px 0 0 28px; padding-left
 @media (max-width: 1000px) { .workspace-grid { gap: 24px; grid-template-columns: minmax(0,1fr) 220px; } .panel { padding: 24px; } .section-heading { flex-wrap: wrap; gap: 10px; } .username { display: none; } .login-panel { gap: 40px; } }
 @media (max-width: 760px) { .topbar { min-height: 80px; padding: 16px 20px; align-items: flex-start; } .brand { font-size: 16px; } .brand-mark { width: 35px; height: 35px; } .brand small { font-size: 8px; } .account { flex-wrap: wrap; justify-content: flex-end; gap: 8px; font-size: 10px; max-width: 150px; } .provider { gap: 5px; font-size: 9px; } .header-button { padding: 3px 8px; font-size: 10px; } main { padding: 0 20px; } .intro { padding: 38px 0 30px; gap: 25px; } h1 { letter-spacing: -1.8px; } .intro-note { display: none; } .intro > div > p:last-child { font-size: 12px; } .desktop-break { display: none; } .workspace-grid { display: flex; flex-direction: column; gap: 30px; } .workspace-grid > div, aside { width: 100%; } .panel { padding: 22px; } .section-heading { margin-bottom: 24px; } h2 { font-size: 21px; } .history-list { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 0 12px; } .empty-history { padding: 20px 0; } .empty-history > span { display: none; } .method-note { padding: 22px 0 0; max-width: 450px; } .login-panel { display: block; } .login-panel form { margin-top: 28px; } .score { flex-basis: 120px; padding-right: 15px; } .score strong { font-size: 50px; } .score-row { gap: 20px; } .score-row h3 { font-size: 12px; } .score-row p { font-size: 11px; } .evidence-heading { align-items: flex-start; } .weight-label { text-align: right; } .report-footer { flex-wrap: wrap; gap: 10px; } .site-footer { margin-top: 28px; flex-direction: column; gap: 8px; padding: 22px 0; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; } }
+
+.saved-source select { width: 100%; min-width: 0; border: 1px solid #7d8d82; border-radius: 3px; padding: 11px 12px; color: #172b35; background: #fffefa; font-size: 16px; }
+.saved-source .help { margin-top: 10px; }
+.reprocess-option { display: flex; gap: 9px; align-items: flex-start; font-weight: 400; line-height: 1.7; }
+.reprocess-option input { flex: 0 0 18px; width: 18px; height: 18px; margin: 2px 0 0; accent-color: var(--teal); }
+.document-library { margin-bottom: 30px; min-width: 0; }
+.document-library h2 { font-size: 18px; margin-bottom: 12px; }
+.document-library h2 span { font-size: 12px; color: var(--muted); margin-inline-start: 6px; }
+.document-list { margin: 0; padding: 0; list-style: none; border-top: 1px solid var(--line); }
+.document-list li { padding: 16px 0; border-bottom: 1px solid var(--line); }
+.document-list h3 { overflow-wrap: anywhere; font-size: 13px; margin-bottom: 6px; }
+.document-list .help { margin-bottom: 6px; }
+.document-actions { display: flex; flex-wrap: wrap; column-gap: 16px; row-gap: 4px; }
+.document-actions .text-button { min-height: 36px; white-space: normal; }
+.document-library .delete-confirm { padding: 16px; overflow-wrap: anywhere; }
+.document-library .danger-button { margin-bottom: 8px; }
+@media (max-width: 760px) { .document-actions .text-button { min-height: 44px; } .saved-source select { max-width: 100%; } }

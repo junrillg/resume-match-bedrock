@@ -3,7 +3,13 @@ export type Session = {
   username?: string;
   csrfToken: string;
   log_viewer_url?: string;
+  document_retention_days: number;
   provider: 'demo' | 'bedrock-local' | 'bedrock';
+};
+export type DocumentRecord = {
+  id: string; filename: string; content_type: string; size_bytes: number;
+  status: 'uploading' | 'pending' | 'ready' | 'rejected' | 'deleting' | 'deleted';
+  created_at: string; expires_at: string;
 };
 export type Requirement = { skill: string; weight: number };
 export type Match = {
@@ -18,12 +24,13 @@ export type Match = {
 export type Job = {
   id: string;
   job_title: string;
-  status: 'queued' | 'running' | 'succeeded' | 'failed';
+  status: 'uploading' | 'queued' | 'running' | 'succeeded' | 'failed';
   attempts: number;
   created_at: string;
   request_id: string;
   error_code: string | null;
   match: Match | null;
+  document: DocumentRecord | null;
 };
 
 export class ApiError extends Error {
@@ -59,4 +66,27 @@ export async function api<T>(path: string, options: RequestInit = {}, csrfToken?
     clearTimeout(timeout);
     options.signal?.removeEventListener('abort', cancel);
   }
+}
+
+export async function downloadDocument(id: string): Promise<Blob> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10000);
+  try {
+    const response = await fetch(`/api/documents/${encodeURIComponent(id)}/download/`, {
+      credentials: 'same-origin', cache: 'no-store', signal: controller.signal,
+    });
+    if (!response.ok) {
+      const body = await response.json().catch(() => null);
+      throw new ApiError(body?.error || 'The original could not be downloaded. Try again later.', response.status, body?.request_id);
+    }
+    if (!response.headers.get('Content-Type')?.includes('application/octet-stream')) {
+      throw new ApiError('The server returned an unreadable download. Try again later.', response.status);
+    }
+    return await response.blob();
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
+    throw new ApiError(controller.signal.aborted
+      ? 'The download timed out. Please try again.'
+      : 'Cannot download the original. Check your connection and try again.', 0);
+  } finally { clearTimeout(timeout); }
 }

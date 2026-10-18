@@ -36,3 +36,25 @@ describe('same-origin API boundary', () => {
     await expect(api('session/')).rejects.toMatchObject({ status: 502 });
   });
 });
+
+describe('private original downloads', () => {
+  it('uses owner cookies and no-store and returns binary content', async () => {
+    const { downloadDocument } = await import('./api');
+    const fetcher = vi.fn().mockResolvedValue(new Response('synthetic original', { headers: { 'Content-Type': 'application/octet-stream' } }));
+    vi.stubGlobal('fetch', fetcher);
+    const blob = await downloadDocument('doc-1');
+    expect(await blob.text()).toBe('synthetic original');
+    expect(fetcher.mock.calls[0][0]).toBe('/api/documents/doc-1/download/');
+    expect(fetcher.mock.calls[0][1]).toMatchObject({ credentials: 'same-origin', cache: 'no-store' });
+  });
+
+  it('preserves authentication and safety errors and refuses JSON as an original', async () => {
+    const { downloadDocument } = await import('./api');
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: 'Sign in.', request_id: 'safe-reference' }), { status: 401 }))
+      .mockResolvedValueOnce(new Response('{}', { headers: { 'Content-Type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetcher);
+    await expect(downloadDocument('doc-1')).rejects.toMatchObject({ status: 401, requestId: 'safe-reference' });
+    await expect(downloadDocument('doc-1')).rejects.toBeInstanceOf(ApiError);
+  });
+});

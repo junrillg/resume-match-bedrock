@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import App, { MatchResult } from './App';
-import type { Job, Match, Session } from './api';
+import type { DocumentRecord, Job, Match, Session } from './api';
 
 const report: Match = {
   id: 'report-1', job_title: 'Full stack engineer', score: 60, provider: 'demo',
@@ -11,16 +11,18 @@ const report: Match = {
     { skill: 'PostgreSQL', weight: 2, matched: false, evidence: null },
   ],
 };
-const queued: Job = { id: 'job-1', job_title: report.job_title, status: 'queued', attempts: 0, created_at: report.created_at, request_id: report.request_id, error_code: null, match: null };
-const signedIn: Session = { authenticated: true, username: 'reviewer', csrfToken: 'rotated-token', provider: 'demo' };
-const anonymous: Session = { authenticated: false, csrfToken: 'anonymous-token', provider: 'demo' };
+const queued: Job = { id: 'job-1', job_title: report.job_title, status: 'queued', attempts: 0, created_at: report.created_at, request_id: report.request_id, error_code: null, match: null, document: null };
+const signedIn: Session = { authenticated: true, username: 'reviewer', csrfToken: 'rotated-token', provider: 'demo', document_retention_days: 90 };
+const anonymous: Session = { authenticated: false, csrfToken: 'anonymous-token', provider: 'demo', document_retention_days: 90 };
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
 
 function server(session = signedIn, jobs: Job[] = []) {
   const state = {
-    session, jobs, matches: [] as Match[],
+    session, jobs, matches: [] as Match[], documents: [] as DocumentRecord[],
     post: async (_options: RequestInit) => json(queued, 202),
     readJobs: async (): Promise<Response> => json({ jobs: state.jobs }),
+    readDocuments: async (): Promise<Response> => json({ documents: state.documents }),
+    download: async (): Promise<Response> => new Response('synthetic original', { headers: { 'Content-Type': 'application/octet-stream' } }),
   };
   const fetcher = vi.fn(async (url: string, options: RequestInit) => {
     if (url === '/api/session/') return json(state.session);
@@ -28,6 +30,9 @@ function server(session = signedIn, jobs: Job[] = []) {
     if (url === '/api/logout/') { state.session = anonymous; return json(anonymous); }
     if (url === '/api/jobs/' && options.method === 'POST') return state.post(options);
     if (url === '/api/jobs/') return state.readJobs();
+    if (url === '/api/documents/') return state.readDocuments();
+    if (url.endsWith('/download/')) return state.download();
+    if (url.startsWith('/api/documents/') && options.method === 'DELETE') { state.documents = []; state.jobs = []; state.matches = []; return json({ deleted: true, status: 'deleting' }, 202); }
     if (url === '/api/matches/') return json({ matches: state.matches });
     if (options.method === 'DELETE') { state.jobs = []; state.matches = []; return json({ deleted: true }); }
     throw new Error(`Unexpected request: ${url}`);
@@ -134,7 +139,7 @@ it('aborts a hung status request after ten seconds and pauses updates', async ()
   const { state, fetcher } = server(signedIn, [queued]);
   await mount();
   state.readJobs = () => new Promise((_resolve, reject) => {
-    const signal = fetcher.mock.calls.at(-1)![1].signal!;
+    const signal = fetcher.mock.calls.filter(([url]) => url === '/api/jobs/').at(-1)![1].signal!;
     signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
   });
   await tick(); await tick(10000);
@@ -182,7 +187,7 @@ it('cancels polling on unmount and ignores a response that finishes afterward', 
   const { state, fetcher } = server(signedIn, [queued]);
   await mount(); let finish!: (response: Response) => void;
   state.readJobs = () => new Promise((resolve) => { finish = resolve; }); await tick();
-  const pending = fetcher.mock.calls.at(-1)![1]; cleanup(); expect(pending.signal?.aborted).toBe(true);
+  const pending = fetcher.mock.calls.filter(([url]) => url === '/api/jobs/').at(-1)![1]; cleanup(); expect(pending.signal?.aborted).toBe(true);
   await act(async () => { finish(json({ jobs: [queued] })); });
   const count = fetcher.mock.calls.length; await tick(5000); expect(fetcher.mock.calls).toHaveLength(count);
 });
@@ -236,4 +241,113 @@ it('shows the configured log viewer and omits the link when unavailable', async 
   state.session = signedIn;
   await mount();
   expect(screen.queryByRole('link', { name: /OpenObserve log viewer/ })).toBeNull();
+});
+
+const stored: DocumentRecord = {
+  id: 'doc-1', filename: 'saved-original.txt', content_type: 'text/plain', size_bytes: 24,
+  status: 'ready', created_at: '2026-10-18T00:00:00Z', expires_at: '2027-01-16T00:00:00Z',
+};
+
+it('submits a saved source without new bytes and rotates the key for explicit reprocessing', async () => {
+  const { state, fetcher } = server(); state.documents = [stored];
+  state.post = async () => json({ ...queued, document: stored }, 202);
+  await mount(); await click('Use source'); await click('Analyze evidence');
+  const first = fetcher.mock.calls.find(([url, options]) => url === '/api/jobs/' && options.method === 'POST')![1];
+  expect((first.body as FormData).get('document_id')).toBe('doc-1');
+  expect((first.body as FormData).get('reprocess')).toBe('false');
+  expect((first.body as FormData).has('resume')).toBe(false);
+  expect((first.body as FormData).has('resume_text')).toBe(false);
+  fireEvent.click(screen.getByLabelText('Re-extract the original instead of using saved text'));
+  await click('Analyze evidence');
+  const second = fetcher.mock.calls.filter(([url, options]) => url === '/api/jobs/' && options.method === 'POST')[1][1];
+  expect((second.body as FormData).get('reprocess')).toBe('true');
+  expect(new Headers(second.headers).get('Idempotency-Key')).not.toBe(new Headers(first.headers).get('Idempotency-Key'));
+});
+
+it('preserves exact pasted whitespace in the body and idempotency identity', async () => {
+  const { state, fetcher } = server(); state.post = async () => { throw new TypeError('offline'); };
+  await mount();
+  fireEvent.change(screen.getByLabelText('Résumé text'), { target: { value: '  Python APIs.\n' } });
+  await click('Analyze evidence');
+  fireEvent.change(screen.getByLabelText('Résumé text'), { target: { value: 'Python APIs.' } });
+  await click('Analyze evidence');
+  const posts = fetcher.mock.calls.filter(([url, options]) => url === '/api/jobs/' && options.method === 'POST').map(([, options]) => options);
+  expect((posts[0].body as FormData).get('resume_text')).toBe('  Python APIs.\n');
+  expect(new Headers(posts[0].headers).get('Idempotency-Key')).not.toBe(new Headers(posts[1].headers).get('Idempotency-Key'));
+});
+
+it('makes pending originals reusable, hides their downloads and shows configured retention', async () => {
+  const { state } = server({ ...signedIn, document_retention_days: 45 });
+  state.documents = [{ ...stored, status: 'pending' }];
+  await mount();
+  expect(screen.getByText(/expire after 45 days/)).toBeTruthy();
+  expect(screen.getByText(/Waiting for safety checks/)).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Download original' })).toBeNull();
+  await click('Use source');
+  expect((screen.getByLabelText('Choose a saved source') as HTMLSelectElement).value).toBe('doc-1');
+  expect(screen.getByText(/Expires Jan 16, 2027/)).toBeTruthy();
+});
+
+it('confirms source deletion separately and rejects a stale poll restoring its reports or original', async () => {
+  const linked = { ...queued, document: stored };
+  const { state, fetcher } = server(signedIn, [linked]); state.documents = [stored]; state.matches = [report];
+  await mount();
+  let complete!: (response: Response) => void;
+  state.readJobs = () => new Promise((resolve) => { complete = resolve; }); await tick();
+  state.readJobs = async () => json({ jobs: state.jobs });
+  const before = fetcher.mock.calls.filter(([, options]) => options.method === 'DELETE').length;
+  await click('Delete original');
+  expect(screen.getByText(/and all its comparisons and reports/)).toBeTruthy();
+  expect(fetcher.mock.calls.filter(([, options]) => options.method === 'DELETE')).toHaveLength(before);
+  await click('Delete original and reports');
+  await act(async () => { complete(json({ jobs: [linked] })); });
+  expect(screen.queryByText('saved-original.txt')).toBeNull();
+  expect(screen.queryByText('job-1')).toBeNull();
+  expect(screen.queryByRole('meter')).toBeNull();
+  expect(fetcher.mock.calls.some(([url, options]) => url === '/api/documents/doc-1/' && options.method === 'DELETE')).toBe(true);
+});
+
+it('does not release a late download after sign out', async () => {
+  const { state } = server(); state.documents = [stored];
+  let complete!: (response: Response) => void;
+  state.download = () => new Promise((resolve) => { complete = resolve; });
+  const create = vi.fn();
+  vi.stubGlobal('URL', { createObjectURL: create, revokeObjectURL: vi.fn() });
+  await mount(); await click('Download original'); await click('Sign out');
+  await act(async () => { complete(new Response('synthetic', { headers: { 'Content-Type': 'application/octet-stream' } })); });
+  expect(create).not.toHaveBeenCalled();
+  expect(screen.getByRole('heading', { name: 'Sign in to review a résumé' })).toBeTruthy();
+  await login();
+  expect(screen.queryByText(/Original upload is incomplete/)).toBeNull();
+});
+
+it('handles download safety failures inline and clears private sources on a download 401', async () => {
+  const { state } = server(); state.documents = [stored];
+  state.download = async () => json({ error: 'Safety checks are unavailable.', request_id: 'download-trace' }, 503);
+  await mount(); await click('Download original');
+  expect(screen.getByText(/Safety checks are unavailable.*download-trace/)).toBeTruthy();
+  state.session = anonymous; state.download = async () => json({ error: 'Sign in again.' }, 401);
+  await click('Download original');
+  expect(screen.getByRole('heading', { name: 'Sign in to review a résumé' })).toBeTruthy();
+  expect(screen.queryByText('saved-original.txt')).toBeNull();
+});
+
+it('restores uploading receipts as active work and explains source replay instead of claiming completion', async () => {
+  const { state } = server(signedIn, [{ ...queued, status: 'uploading', document: { ...stored, status: 'uploading' } }]);
+  state.documents = [{ ...stored, status: 'uploading' }];
+  await mount();
+  expect(screen.getByText(/The original upload is incomplete/)).toBeTruthy();
+  state.jobs = [{ ...queued, status: 'succeeded', document: stored, match: report }]; state.documents = [stored];
+  await tick();
+  expect(screen.getByRole('button', { name: 'Download original' })).toBeTruthy();
+  expect(screen.getByRole('meter')).toBeTruthy();
+});
+
+it('explains unavailable originals for legacy jobs and renders long source filenames as text', async () => {
+  const { state } = server(signedIn, [{ ...queued, status: 'succeeded', match: report }]);
+  const filename = '長いrésumé-'.repeat(20) + '.pdf'; state.documents = [{ ...stored, filename }];
+  await mount();
+  await click(/Full stack engineer.*60%/);
+  expect(screen.getByText('Original unavailable for this earlier comparison.')).toBeTruthy();
+  expect(screen.getByRole('heading', { name: filename })).toBeTruthy();
 });
