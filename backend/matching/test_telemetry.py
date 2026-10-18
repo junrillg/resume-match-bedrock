@@ -1,3 +1,4 @@
+from .test_storage_support import StorageBoundaryMixin
 import logging
 import threading
 import time
@@ -109,8 +110,9 @@ class TelemetryTests(SimpleTestCase):
 
 
 @override_settings(MATCH_PROVIDER="demo", LAB_SERVICE_NAME="api", OTEL_LOGS_ENDPOINT="")
-class TelemetryTransactionTests(TestCase):
+class TelemetryTransactionTests(StorageBoundaryMixin, TestCase):
     def setUp(self):
+        super().setUp()
         self.owner = get_user_model().objects.create_user("telemetry-fixture")
         self.client.force_login(self.owner)
 

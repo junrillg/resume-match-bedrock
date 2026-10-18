@@ -137,3 +137,27 @@ CELERY_TASK_DEFAULT_ROUTING_KEY = "resume.match.quorum"
 CELERY_TASK_DEFAULT_DELIVERY_MODE = "persistent"
 CELERY_TASK_PUBLISH_RETRY = False
 LOGGING = {"version": 1, "disable_existing_loggers": False, "handlers": {"console": {"class": "logging.StreamHandler"}}, "loggers": {"matching.audit": {"handlers": ["console"], "level": "INFO", "propagate": False}}}
+
+# Originals use immutable generated keys. Local endpoints never discover cloud credentials.
+DOCUMENT_BUCKET = os.getenv("DOCUMENT_BUCKET", "resume-originals")
+DOCUMENT_ENDPOINT = os.getenv("DOCUMENT_ENDPOINT", "")
+DOCUMENT_REGION = os.getenv("DOCUMENT_REGION", "us-east-1")
+DOCUMENT_ACCESS_KEY = os.getenv("DOCUMENT_ACCESS_KEY", "")
+DOCUMENT_SECRET_KEY = os.getenv("DOCUMENT_SECRET_KEY", "")
+DOCUMENT_SCAN_MODE = os.getenv("DOCUMENT_SCAN_MODE", "guardduty")
+DOCUMENT_RETENTION_DAYS = int(os.getenv("DOCUMENT_RETENTION_DAYS", "90"))
+DOCUMENT_UPLOAD_TTL_SECONDS = 3600
+DOCUMENT_UPLOAD_LEASE_SECONDS = 90
+DOCUMENT_SCANNER_HOST = os.getenv("DOCUMENT_SCANNER_HOST", "scanner")
+DOCUMENT_SCANNER_PORT = int(os.getenv("DOCUMENT_SCANNER_PORT", "3310"))
+DOCUMENT_SIGNATURE_MAX_AGE_DAYS = 14
+if not 1 <= DOCUMENT_RETENTION_DAYS <= 3650:
+    raise ImproperlyConfigured("DOCUMENT_RETENTION_DAYS must be 1–3650.")
+if DOCUMENT_SCAN_MODE not in {"clamav", "guardduty"}:
+    raise ImproperlyConfigured("DOCUMENT_SCAN_MODE must be clamav or guardduty.")
+if DOCUMENT_ENDPOINT:
+    endpoint = urlsplit(DOCUMENT_ENDPOINT)
+    if not DEBUG or endpoint.scheme != "http" or endpoint.hostname not in {"objectstore", "localhost", "127.0.0.1"} or endpoint.username or endpoint.password or endpoint.path or endpoint.query or endpoint.fragment:
+        raise ImproperlyConfigured("DOCUMENT_ENDPOINT is restricted to local development object storage.")
+    if not DOCUMENT_ACCESS_KEY or not DOCUMENT_SECRET_KEY or DOCUMENT_SCAN_MODE != "clamav":
+        raise ImproperlyConfigured("Local object storage requires explicit local credentials and ClamAV.")

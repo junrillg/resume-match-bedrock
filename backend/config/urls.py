@@ -8,6 +8,9 @@ urlpatterns = [
     path("api/logout/", views.logout),
     path("api/matches/", views.matches),
     path("api/matches/<uuid:match_id>/", views.match_detail),
+    path("api/documents/", views.documents),
+    path("api/documents/<uuid:document_id>/", views.document_detail),
+    path("api/documents/<uuid:document_id>/download/", views.document_download),
     path("api/jobs/", views.jobs),
     path("api/jobs/<uuid:job_id>/", views.job_detail),
 ]

@@ -37,6 +37,9 @@ boundary, rather than model intelligence or managed AWS behavior.
 ./scripts/lab up
 ```
 
+Allow at least 8 GiB for Docker: the private ClamAV scanner reserves 4 GiB.
+Its pinned image uses AMD64 emulation on ARM64; signature updates require internet access.
+
 Open <http://127.0.0.1:8088>. Run `./scripts/lab credentials` **in your private terminal**
 for the generated login. Load the synthetic sample: its expected score is **80%**.
 Search correlated process events in OpenObserve at <http://127.0.0.1:5080>.

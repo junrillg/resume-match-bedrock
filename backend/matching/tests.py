@@ -1,3 +1,4 @@
+from .test_storage_support import StorageBoundaryMixin
 import io
 import json
 import uuid
@@ -163,7 +164,7 @@ class BedrockTests(SimpleTestCase):
 
 
 @override_settings(MATCH_PROVIDER="demo", OTEL_LOGS_ENDPOINT="")
-class APITests(TestCase):
+class APITests(StorageBoundaryMixin, TestCase):
     @classmethod
     def setUpTestData(cls):
         cls.alice = get_user_model().objects.create_user("alice", password="Synthetic-testing-password-2026!")
@@ -214,7 +215,7 @@ class APITests(TestCase):
     def test_txt_upload_and_invalid_forms(self):
         self.client.force_login(self.alice)
         self.assertEqual(self.post_job(resume_text="", resume=SimpleUploadedFile("r.txt", b"Built Python APIs")).status_code, 202)
-        self.assertEqual(Job.objects.get().resume_text, "Built Python APIs")
+        self.assertEqual(Job.objects.get().resume_text, "")
         for changes in [{"job_title": ""}, {"requirements": "bad"}, {"resume_text": "x" * 30_001}, {"surprise": "value"}]:
             with self.subTest(changes=changes):
                 response = self.post_job(**changes)

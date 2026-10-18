@@ -15,11 +15,11 @@ from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
 from opentelemetry.sdk.resources import Resource
 
 EVENTS = {"job.accepted", "job.published", "job.started", "job.retry", "job.succeeded",
-          "job.failed", "job.recovered", "job.publish_failed", "job.interrupted", "provider.requested", "provider.responded", "provider.completed"}
+          "job.failed", "job.recovered", "job.publish_failed", "job.interrupted", "provider.requested", "provider.responded", "provider.completed", "document.ready", "document.rejected", "document.delete_requested", "document.delete_pending", "document.deleted"}
 STAGES = {"api", "relay", "worker", "recovery", "provider"}
-STATUSES = {"queued", "running", "succeeded", "failed", "confirmed", "unpublished", "interrupted"}
+STATUSES = {"queued", "running", "succeeded", "failed", "confirmed", "unpublished", "interrupted", "ready", "rejected", "deleting", "deleted"}
 ERRORS = {"invalid_evidence", "provider_rejected", "processing_failed", "retry_exhausted",
-          "deadline_exceeded", "provider_unavailable", "publish_unavailable"}
+          "deadline_exceeded", "provider_unavailable", "publish_unavailable", "document_rejected", "document_integrity", "document_unavailable"}
 audit = logging.getLogger("matching.audit")
 
 # SDK export errors can contain HTTP response bodies or raw exceptions. Never bridge them.
@@ -67,7 +67,7 @@ def emit(event, **attributes):
     if event not in EVENTS:
         return
     safe = {}
-    for key in ("request_id", "job_id"):
+    for key in ("request_id", "job_id", "document_id"):
         try:
             safe[key] = str(uuid.UUID(str(attributes[key])))
         except (KeyError, ValueError, TypeError, AttributeError):

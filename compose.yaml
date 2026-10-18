@@ -26,6 +26,13 @@ x-backend: &backend
     RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?Run ./scripts/lab up first}
     OPENOBSERVE_PASSWORD: ${OPENOBSERVE_PASSWORD:?Run ./scripts/lab up first}
     OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: http://openobserve:5080/api/default/v1/logs
+    DOCUMENT_BUCKET: resume-originals
+    DOCUMENT_ENDPOINT: http://objectstore:8333
+    DOCUMENT_REGION: us-east-1
+    DOCUMENT_SCAN_MODE: clamav
+    DOCUMENT_RETENTION_DAYS: "90"
+    DOCUMENT_ACCESS_KEY: ${OBJECT_API_ACCESS_KEY:?Run ./scripts/lab up first}
+    DOCUMENT_SECRET_KEY: ${OBJECT_API_SECRET_KEY:?Run ./scripts/lab up first}
     LAB_SERVICE_NAME: api
   init: true
   read_only: true
@@ -36,6 +43,56 @@ x-backend: &backend
   cap_drop: [ALL]
 
 services:
+  objectstore:
+    image: chrislusf/seaweedfs:4.48@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d
+    entrypoint: [sh, /start-storage.sh]
+    environment:
+      OBJECT_ADMIN_ACCESS_KEY: ${OBJECT_ADMIN_ACCESS_KEY:?Run ./scripts/lab up first}
+      OBJECT_ADMIN_SECRET_KEY: ${OBJECT_ADMIN_SECRET_KEY:?Run ./scripts/lab up first}
+      OBJECT_API_ACCESS_KEY: ${OBJECT_API_ACCESS_KEY:?Run ./scripts/lab up first}
+      OBJECT_API_SECRET_KEY: ${OBJECT_API_SECRET_KEY:?Run ./scripts/lab up first}
+      OBJECT_WORKER_ACCESS_KEY: ${OBJECT_WORKER_ACCESS_KEY:?Run ./scripts/lab up first}
+      OBJECT_WORKER_SECRET_KEY: ${OBJECT_WORKER_SECRET_KEY:?Run ./scripts/lab up first}
+      OBJECT_RELAY_ACCESS_KEY: ${OBJECT_RELAY_ACCESS_KEY:?Run ./scripts/lab up first}
+      OBJECT_RELAY_SECRET_KEY: ${OBJECT_RELAY_SECRET_KEY:?Run ./scripts/lab up first}
+    volumes:
+      - object-data:/data
+      - ./storage/start.sh:/start-storage.sh:ro
+    tmpfs: [/tmp]
+    mem_limit: 768m
+    healthcheck:
+      test: [CMD, sh, -c, "wget -q -O /dev/null http://127.0.0.1:9333/cluster/status"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
+  storage-init:
+    <<: *backend
+    command: [python, init_storage.py]
+    environment:
+      AWS_EC2_METADATA_DISABLED: "true"
+      OBJECT_ADMIN_ACCESS_KEY: ${OBJECT_ADMIN_ACCESS_KEY:?Run ./scripts/lab up first}
+      OBJECT_ADMIN_SECRET_KEY: ${OBJECT_ADMIN_SECRET_KEY:?Run ./scripts/lab up first}
+    depends_on:
+      objectstore:
+        condition: service_healthy
+    restart: "no"
+
+  scanner:
+    image: clamav/clamav:1.5.4@sha256:638d90201ee7ee6a82d249a2fc23b132e578673b5f1f2766852b127676ca1ef6
+    platform: linux/amd64
+    volumes:
+      - clamav-data:/var/lib/clamav
+    mem_limit: 4g
+    healthcheck:
+      test: [CMD-SHELL, "printf 'zPING\\0' | nc -w 3 127.0.0.1 3310 | grep -q PONG"]
+      interval: 15s
+      timeout: 5s
+      start_period: 180s
+      retries: 40
+    restart: unless-stopped
+
   db:
     image: postgres:17.11-alpine3.24
     environment:
@@ -77,6 +134,8 @@ services:
   api:
     <<: *backend
     depends_on:
+      storage-init:
+        condition: service_completed_successfully
       migrate:
         condition: service_completed_successfully
     healthcheck:
@@ -90,6 +149,8 @@ services:
     <<: *backend
     environment:
       <<: *backend-environment
+      DOCUMENT_ACCESS_KEY: ${OBJECT_WORKER_ACCESS_KEY:?Run ./scripts/lab up first}
+      DOCUMENT_SECRET_KEY: ${OBJECT_WORKER_SECRET_KEY:?Run ./scripts/lab up first}
       LAB_SERVICE_NAME: worker
     command: [celery, -A, config, worker, --loglevel=WARNING, --concurrency=1, --hostname=worker@lab, --without-gossip, --without-mingle]
     depends_on:
@@ -99,6 +160,10 @@ services:
         condition: service_healthy
       provider:
         condition: service_healthy
+      scanner:
+        condition: service_healthy
+      storage-init:
+        condition: service_completed_successfully
     healthcheck:
       test: [CMD, python, -c, "import os,pathlib; os.kill(int(pathlib.Path('/tmp/resume-match-worker-ready').read_text()),0)"]
       interval: 5s
@@ -125,6 +190,8 @@ services:
     <<: *backend
     environment:
       <<: *backend-environment
+      DOCUMENT_ACCESS_KEY: ${OBJECT_RELAY_ACCESS_KEY:?Run ./scripts/lab up first}
+      DOCUMENT_SECRET_KEY: ${OBJECT_RELAY_SECRET_KEY:?Run ./scripts/lab up first}
       LAB_SERVICE_NAME: relay
     command: [python, manage.py, relay_jobs]
     depends_on:
@@ -201,6 +268,8 @@ services:
     restart: unless-stopped
 
 volumes:
+  object-data:
+  clamav-data:
   postgres-data:
   rabbitmq-data:
   openobserve-data:

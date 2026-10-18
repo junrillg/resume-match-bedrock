@@ -6,7 +6,7 @@ usage() {
 Purpose: Run the complete local, synthetic-data lab with Docker Compose.
 Usage: ./scripts/lab up|down|status|logs|test|credentials|help
   up           Build and start services; create private local secrets once and seed lab login.
-  down         Stop this lab; preserve database, broker and log volumes.
+  down         Stop this lab; preserve database, originals, signature, broker and log volumes.
   status       Show service health.
   logs         Follow the latest service logs (Ctrl-C stops following).
   test         Run the backend tests against the container database engine.
@@ -36,7 +36,11 @@ if [ "$action" = up ]; then
     }
     chmod 600 .env
   fi
-  if [ ! -e .env ] || ! grep -q '^OPENOBSERVE_PASSWORD=' .env; then
+  needs_upgrade=false
+  for key in OPENOBSERVE_PASSWORD OBJECT_ADMIN_ACCESS_KEY OBJECT_ADMIN_SECRET_KEY OBJECT_API_ACCESS_KEY OBJECT_API_SECRET_KEY OBJECT_WORKER_ACCESS_KEY OBJECT_WORKER_SECRET_KEY OBJECT_RELAY_ACCESS_KEY OBJECT_RELAY_SECRET_KEY; do
+    if [ ! -e .env ] || ! grep -q "^$key=" .env; then needs_upgrade=true; fi
+  done
+  if [ "$needs_upgrade" = true ]; then
     command -v openssl >/dev/null 2>&1 || { echo 'Install openssl before local environment setup.' >&2; exit 1; }
     umask 077
     pending=$(mktemp .env.init.XXXXXX)
@@ -55,8 +59,16 @@ if [ "$action" = up ]; then
         done
       } > "$pending"
     fi
-    value=$(openssl rand -hex 32)
-    printf 'OPENOBSERVE_PASSWORD=Aa1!%s\n' "$value" >> "$pending"
+    if ! grep -q '^OPENOBSERVE_PASSWORD=' "$pending"; then
+      value=$(openssl rand -hex 32)
+      printf 'OPENOBSERVE_PASSWORD=Aa1!%s\n' "$value" >> "$pending"
+    fi
+    for key in OBJECT_ADMIN_ACCESS_KEY OBJECT_ADMIN_SECRET_KEY OBJECT_API_ACCESS_KEY OBJECT_API_SECRET_KEY OBJECT_WORKER_ACCESS_KEY OBJECT_WORKER_SECRET_KEY OBJECT_RELAY_ACCESS_KEY OBJECT_RELAY_SECRET_KEY; do
+      if ! grep -q "^$key=" "$pending"; then
+        value=$(openssl rand -hex 32)
+        printf '%s=%s\n' "$key" "$value" >> "$pending"
+      fi
+    done
     if [ -n "$original" ]; then
       [ -f .env ] && [ "$original" = "$(cksum .env)" ] || { echo 'Local environment changed; retry up.' >&2; exit 1; }
       mv "$pending" .env
@@ -72,7 +84,7 @@ case "$action" in
   up)
     docker compose config --quiet
     COMPOSE_PARALLEL_LIMIT=1 docker compose build
-    docker compose up -d --wait --wait-timeout 180
+    docker compose up -d --wait --wait-timeout 900
     docker compose exec -T api python manage.py ensure_lab_user
     printf 'Lab ready: http://127.0.0.1:8088/\nLogs: http://127.0.0.1:5080/\nRun ./scripts/lab credentials privately for the local logins.\n'
     ;;

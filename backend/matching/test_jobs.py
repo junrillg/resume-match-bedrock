@@ -1,3 +1,4 @@
+from .test_storage_support import StorageBoundaryMixin
 import json
 import threading
 import uuid
@@ -7,7 +8,7 @@ from unittest.mock import patch
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
-from django.db import close_old_connections, connection
+from django.db import close_old_connections, connection, DatabaseError
 from django.test import Client, TestCase, TransactionTestCase, override_settings, skipUnlessDBFeature
 from django.utils import timezone
 
@@ -35,8 +36,9 @@ def make_job(owner, **changes):
 
 
 @override_settings(MATCH_PROVIDER="demo", OTEL_LOGS_ENDPOINT="")
-class JobAPITests(TestCase):
+class JobAPITests(StorageBoundaryMixin, TestCase):
     def setUp(self):
+        super().setUp()
         self.owner = get_user_model().objects.create_user("async-alice")
         self.other = get_user_model().objects.create_user("async-bob")
         self.client.force_login(self.owner)
@@ -58,7 +60,7 @@ class JobAPITests(TestCase):
         self.assertEqual(first.json()["attempts"], 0)
         self.assertIsNone(first.json()["match"])
         self.assertIsNone(first.json()["error_code"])
-        self.assertEqual(Job.objects.get().resume_text, SOURCE)
+        self.assertEqual(Job.objects.get().resume_text, "")
         self.assertEqual(OutboxEvent.objects.count(), 1)
         self.assertEqual(RateBucket.objects.get(key__startswith="match:").count, 1)
         provider.assert_not_called()
@@ -89,12 +91,17 @@ class JobAPITests(TestCase):
         self.assertEqual(self.client.get("/api/jobs/").status_code, 401)
         self.assertEqual(self.post().status_code, 401)
 
-    def test_job_outbox_and_quota_roll_back_together(self):
-        with patch("matching.views.OutboxEvent.objects.create", side_effect=RuntimeError("simulated crash")), self.assertRaises(RuntimeError):
-            self.post()
-        self.assertEqual(Job.objects.count(), 0)
+    def test_finalization_failure_preserves_reserved_upload_for_replay(self):
+        key = uuid.uuid4()
+        with patch("matching.views.OutboxEvent.objects.create", side_effect=DatabaseError("simulated crash")):
+            self.assertEqual(self.post(key).status_code, 503)
+        self.assertEqual(Job.objects.get().status, "uploading")
         self.assertEqual(OutboxEvent.objects.count(), 0)
-        self.assertEqual(RateBucket.objects.filter(key__startswith="match:").count(), 0)
+        self.assertEqual(RateBucket.objects.get(key__startswith="match:").count, 1)
+        from .models import Document
+        Document.objects.update(upload_lease_until=timezone.now() - timedelta(seconds=1))
+        self.assertEqual(self.post(key).json()["status"], "queued")
+        self.assertEqual(OutboxEvent.objects.count(), 1)
 
     @override_settings(MATCH_DAILY_LIMIT=1)
     def test_quota_applies_only_to_new_logical_jobs(self):
@@ -275,8 +282,9 @@ class JobStateTests(TestCase):
 
 
 @override_settings(MATCH_PROVIDER="demo", OTEL_LOGS_ENDPOINT="")
-class PostgreSQLConcurrencyTests(TransactionTestCase):
+class PostgreSQLConcurrencyTests(StorageBoundaryMixin, TransactionTestCase):
     def setUp(self):
+        super().setUp()
         self.owner = get_user_model().objects.create_user("concurrent-owner")
 
     def in_thread(self, callback):
@@ -301,7 +309,8 @@ class PostgreSQLConcurrencyTests(TransactionTestCase):
         with ThreadPoolExecutor(max_workers=2) as pool:
             futures = [pool.submit(self.in_thread, lambda client=client: submit(client)) for client in clients]
             results = [future.result(timeout=10) for future in futures]
-        self.assertEqual(results[0], results[1])
+        self.assertEqual(results[0][1], results[1][1])
+        self.assertEqual(results[1][0], 202)
         self.assertEqual(results[0][0], 202)
         self.assertEqual(Job.objects.count(), 1)
         self.assertEqual(OutboxEvent.objects.count(), 1)

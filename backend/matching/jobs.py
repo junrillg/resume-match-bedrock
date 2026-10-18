@@ -11,13 +11,14 @@ from django.db.models import Q
 from django.utils import timezone
 
 from config.celery import app
-from .models import Job, Match, OutboxEvent
+from .models import Document, Job, Match, OutboxEvent
 from .services import ProviderError, TransientProviderError, calculate_score, extract_evidence
 from .telemetry import emit
+from .documents import document_text, reconcile_documents, DocumentUnavailable, ScanPending
 
 
 def job_event(event, job, stage, **extra):
-    attributes = {"request_id": job.request_id, "job_id": job.id, "stage": stage,
+    attributes = {"request_id": job.request_id, "job_id": job.id, "document_id": job.document_id, "stage": stage,
                   "status": job.status, "attempt": job.attempts, "error_code": job.error_code, **extra}
     transaction.on_commit(partial(emit, event, **attributes))
 
@@ -64,11 +65,16 @@ def claim_job(job_id):
 
 def finish_job(claim, evidence=None, error_code=None, transient=False, duration_ms=0):
     with transaction.atomic():
+        document = Document.objects.select_for_update().filter(pk=claim.document_id).first() if claim.document_id else None
+        if claim.document_id and (document is None or document.status in {Document.Status.DELETING, Document.Status.DELETED} or document.expires_at <= timezone.now()):
+            return False
         job = Job.objects.select_for_update().filter(pk=claim.pk).first()
         now = timezone.now()
         if job is None or job.status != Job.Status.RUNNING or job.lease_id != claim.lease_id or job.lease_expires_at <= now:
             return False
-        if job.deadline_at <= now:
+        if document is not None and not error_code and document.status != Document.Status.READY:
+            fail_job(job, "document_rejected", duration_ms=duration_ms)
+        elif job.deadline_at <= now:
             fail_job(job, "deadline_exceeded", duration_ms=duration_ms)
         elif transient and job.attempts < settings.JOB_MAX_ATTEMPTS:
             enqueue_again(job, now)
@@ -94,15 +100,25 @@ def run_job(job_id):
     claim = claim_job(job_id)
     if claim is None:
         return
-    emit("job.started", request_id=claim.request_id, job_id=claim.id, stage="worker", status="running", attempt=claim.attempts)
+    emit("job.started", request_id=claim.request_id, job_id=claim.id, document_id=claim.document_id, stage="worker", status="running", attempt=claim.attempts)
     started = time.monotonic()
     try:
+        text = document_text(claim) if claim.document_id else claim.resume_text
         if claim.provider != "demo":
             emit("provider.requested", request_id=claim.request_id, job_id=claim.id, stage="worker", status="running", attempt=claim.attempts)
-        evidence = extract_evidence(claim.resume_text, claim.requirements, provider=claim.provider,
+        evidence = extract_evidence(text, claim.requirements, provider=claim.provider,
                                     correlation={"request_id": claim.request_id, "job_id": claim.id})
         if claim.provider != "demo":
             emit("provider.responded", request_id=claim.request_id, job_id=claim.id, stage="worker", status="running", attempt=claim.attempts, duration_ms=int((time.monotonic() - started) * 1000))
+    except ScanPending:
+        with transaction.atomic():
+            job = Job.objects.select_for_update().filter(pk=claim.pk, status=Job.Status.RUNNING, lease_id=claim.lease_id).first()
+            if job is not None:
+                job.attempts = max(0, job.attempts - 1)
+                enqueue_again(job, timezone.now() + timedelta(seconds=8))
+                job_event("job.retry", job, "worker", error_code="document_unavailable")
+    except DocumentUnavailable:
+        finish_job(claim, error_code="document_unavailable", transient=True, duration_ms=int((time.monotonic() - started) * 1000))
     except (TransientProviderError, SoftTimeLimitExceeded):
         finish_job(claim, error_code="provider_unavailable", transient=True, duration_ms=int((time.monotonic() - started) * 1000))
     except ProviderError as exc:
@@ -157,6 +173,7 @@ def publish_job(job_id):
 
 
 def relay_once(limit=100):
+    reconcile_documents(limit)
     recover_jobs(limit)
     sent = 0
     for _ in range(limit):

@@ -9,13 +9,16 @@ from django.contrib.auth import get_user_model
 from django.core.exceptions import RequestDataTooBig, TooManyFieldsSent, TooManyFilesSent
 from django.db.models import F
 from django.db import connection, transaction, DatabaseError
-from django.http import JsonResponse
+from django.http import JsonResponse, FileResponse
 from django.middleware.csrf import get_token
 from django.utils import timezone
 
-from .models import Job, Match, OutboxEvent, RateBucket
+from .models import Document, Job, Match, OutboxEvent, RateBucket
 from .services import InvalidInput, read_requirements, read_resume
 from .telemetry import emit
+from .documents import read_source, put_original, get_original, tombstone, DocumentError, DocumentUnavailable
+import io
+from django.db.models import Q
 
 
 def error(request, message, status):
@@ -35,7 +38,7 @@ def server_error(request):
 
 
 def session_payload(request):
-    payload = {"authenticated": request.user.is_authenticated, "csrfToken": get_token(request), "provider": settings.MATCH_PROVIDER, "log_viewer_url": settings.LOG_VIEWER_URL}
+    payload = {"authenticated": request.user.is_authenticated, "csrfToken": get_token(request), "provider": settings.MATCH_PROVIDER, "log_viewer_url": settings.LOG_VIEWER_URL, "document_retention_days": settings.DOCUMENT_RETENTION_DAYS}
     if request.user.is_authenticated:
         payload["username"] = request.user.get_username()
     return payload
@@ -101,7 +104,7 @@ def serialize(record):
 
 
 def read_match_form(request):
-    if set(request.POST) - {"resume_text", "requirements", "job_title"} or set(request.FILES) - {"resume"}:
+    if set(request.POST) - {"resume_text", "requirements", "job_title", "document_id", "reprocess"} or set(request.FILES) - {"resume"}:
         raise InvalidInput("Unexpected form fields.")
     if any(len(request.POST.getlist(key)) != 1 for key in request.POST) or len(request.FILES.getlist("resume")) > 1:
         raise InvalidInput("Repeated form fields are unsupported.")
@@ -109,15 +112,29 @@ def read_match_form(request):
     if not 1 <= len(title) <= 120 or any(ord(c) < 32 for c in title):
         raise InvalidInput("Job title must contain 1–120 printable characters.")
     requirements = read_requirements(request.POST.get("requirements"))
-    text = read_resume(request.POST.get("resume_text", ""), request.FILES.get("resume"))
-    return title, requirements, text
+    reprocess = request.POST.get("reprocess", "false")
+    if reprocess not in {"true", "false"}:
+        raise InvalidInput("reprocess must be true or false.")
+    document_id = request.POST.get("document_id")
+    if document_id:
+        if request.POST.get("resume_text", "").strip() or request.FILES.get("resume"):
+            raise InvalidInput("Use a saved document OR a new source.")
+        try:
+            document_id = uuid.UUID(document_id)
+        except (ValueError, TypeError):
+            raise InvalidInput("Provide a document UUID.") from None
+        return title, requirements, document_id, reprocess == "true", None
+    if reprocess == "true":
+        raise InvalidInput("Reprocessing requires a saved document.")
+    source = read_source(request.POST.get("resume_text", ""), request.FILES.get("resume"))
+    return title, requirements, None, False, source
 
 
 def matches(request):
     if not request.user.is_authenticated:
         return error(request, "Sign in to continue.", 401)
     if request.method == "GET":
-        return JsonResponse({"matches": [serialize(record) for record in Match.objects.filter(owner=request.user)[:100]]})
+        return JsonResponse({"matches": [serialize(record) for record in Match.objects.filter(owner=request.user, created_at__gt=timezone.now() - timedelta(days=settings.DOCUMENT_RETENTION_DAYS)).filter(Q(job__document__isnull=True) | Q(job__document__expires_at__gt=timezone.now())).exclude(job__document__status__in=["deleting", "deleted"])[:100]]})
     return error(request, "Method not allowed. Submit new comparisons through /api/jobs/.", 405)
 
 
@@ -140,21 +157,36 @@ def match_detail(request, match_id):
     return JsonResponse({"deleted": str(match_id), "request_id": str(request.request_id)})
 
 
+def serialize_document(document):
+    return {"id": str(document.id), "filename": document.filename, "content_type": document.content_type,
+            "size_bytes": document.size_bytes, "status": document.status,
+            "created_at": document.created_at.isoformat(), "expires_at": document.expires_at.isoformat()}
+
+
 def serialize_job(job):
     try:
         match = serialize(job.match)
     except Match.DoesNotExist:
         match = None
+    document = job.document if job.document_id else None
     return {"id": str(job.id), "job_title": job.job_title, "status": job.status,
             "attempts": job.attempts, "created_at": job.created_at.isoformat(),
-            "request_id": str(job.request_id), "error_code": job.error_code or None, "match": match}
+            "request_id": str(job.request_id), "error_code": job.error_code or None, "match": match,
+            "document": serialize_document(document) if document and document.status != Document.Status.DELETED else None}
 
 
 def jobs(request):
+    try:
+        return admit_jobs(request)
+    except DatabaseError:
+        return error(request, "Document admission is unavailable. Retry unchanged inputs.", 503)
+
+
+def admit_jobs(request):
     if not request.user.is_authenticated:
         return error(request, "Sign in to continue.", 401)
     if request.method == "GET":
-        records = Job.objects.filter(owner=request.user).select_related("match")[:100]
+        records = Job.objects.filter(owner=request.user).filter(Q(document__isnull=True) | Q(document__expires_at__gt=timezone.now())).exclude(document__status__in=["deleting", "deleted"]).select_related("match", "document")[:100]
         return JsonResponse({"jobs": [serialize_job(job) for job in records]})
     if request.method != "POST":
         return error(request, "Method not allowed.", 405)
@@ -163,36 +195,148 @@ def jobs(request):
     except (ValueError, AttributeError):
         return error(request, "Provide a UUID Idempotency-Key header.", 400)
     try:
-        title, requirements, text = read_match_form(request)
+        title, requirements, document_id, reprocess, source = read_match_form(request)
     except (InvalidInput, RequestDataTooBig, TooManyFieldsSent, TooManyFilesSent) as exc:
         return error(request, str(exc) if isinstance(exc, InvalidInput) else "Request body exceeds upload limits.", 400)
-    fingerprint = hashlib.sha256(json.dumps({"job_title": title, "requirements": requirements, "resume_text": text}, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     now = timezone.now()
+    identity = {"document_id": str(document_id), "reprocess": reprocess} if document_id else {
+        "sha256": hashlib.sha256(source[0]).hexdigest(), "content_type": source[2]}
+    fingerprint = hashlib.sha256(json.dumps({"job_title": title, "requirements": requirements, "source": identity}, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+    lease = None
     with transaction.atomic():
-        # One owner lock serializes idempotency admission and quota charging across API workers.
         get_user_model().objects.select_for_update().get(pk=request.user.pk)
-        existing = Job.objects.filter(owner=request.user, idempotency_key=key).select_related("match").first()
+        document = None
+        if document_id:
+            document = Document.objects.select_for_update().filter(pk=document_id, owner=request.user, status__in=[Document.Status.PENDING, Document.Status.READY], expires_at__gt=now).first()
+            if document is None:
+                return error(request, "Saved document is not available.", 404)
+        existing = Job.objects.filter(owner=request.user, idempotency_key=key).select_related("match", "document").first()
         if existing:
             if existing.payload_hash != fingerprint:
                 return error(request, "Idempotency key already belongs to a different request.", 409)
-            return JsonResponse(serialize_job(existing), status=202)
-        if not consume_bucket(f"match:{request.user.pk}:{now.date()}", settings.MATCH_DAILY_LIMIT, now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)):
-            return error(request, "Daily matching limit reached. Try again tomorrow (UTC).", 429)
-        job = Job.objects.create(owner=request.user, idempotency_key=key, payload_hash=fingerprint,
-                                 job_title=title, requirements=requirements, resume_text=text,
-                                 provider=settings.MATCH_PROVIDER, request_id=request.request_id,
-                                 available_at=now, wake_at=now + timedelta(seconds=settings.JOB_WAKE_SECONDS),
-                                 deadline_at=now + timedelta(seconds=settings.JOB_DEADLINE_SECONDS))
-        OutboxEvent.objects.create(job=job, available_at=now)
-    emit("job.accepted", request_id=job.request_id, job_id=job.id, stage="api", status="queued", attempt=0)
+            job = existing
+            document = job.document
+            if job.status != Job.Status.UPLOADING:
+                return JsonResponse(serialize_job(job), status=202)
+            document = Document.objects.select_for_update().get(pk=document.pk)
+            job = Job.objects.select_for_update(of=("self",)).select_related("match", "document").get(pk=job.pk)
+            if job.status != Job.Status.UPLOADING:
+                return JsonResponse(serialize_job(job), status=202)
+            if document.status != Document.Status.UPLOADING or document.upload_deadline <= now:
+                return error(request, "Upload reservation is no longer available.", 409)
+            if document.upload_lease_until and document.upload_lease_until > now:
+                return JsonResponse(serialize_job(job), status=202)
+        else:
+            if not consume_bucket(f"match:{request.user.pk}:{now.date()}", settings.MATCH_DAILY_LIMIT, now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)):
+                return error(request, "Daily matching limit reached. Try again tomorrow (UTC).", 429)
+            if source:
+                document_id = uuid.uuid4()
+                document = Document.objects.create(id=document_id, owner=request.user, object_key=f"originals/{document_id}",
+                    filename=source[1], content_type=source[2], size_bytes=len(source[0]), sha256=identity["sha256"],
+                    expires_at=now + timedelta(days=settings.DOCUMENT_RETENTION_DAYS),
+                    upload_deadline=now + timedelta(seconds=settings.DOCUMENT_UPLOAD_TTL_SECONDS))
+            job = Job.objects.create(owner=request.user, document=document, reprocess=reprocess,
+                idempotency_key=key, payload_hash=fingerprint, job_title=title, requirements=requirements, resume_text="",
+                provider=settings.MATCH_PROVIDER, request_id=request.request_id,
+                status=Job.Status.UPLOADING if source else Job.Status.QUEUED,
+                available_at=now, wake_at=now + timedelta(seconds=settings.JOB_WAKE_SECONDS),
+                deadline_at=now + timedelta(seconds=settings.JOB_DEADLINE_SECONDS))
+            if not source:
+                OutboxEvent.objects.create(job=job, available_at=now)
+        if source:
+            lease = uuid.uuid4()
+            document.upload_lease = lease
+            document.upload_lease_until = now + timedelta(seconds=settings.DOCUMENT_UPLOAD_LEASE_SECONDS)
+            document.save(update_fields=["upload_lease", "upload_lease_until"])
+    if source:
+        try:
+            put_original(document, source[0])
+        except DocumentUnavailable:
+            Document.objects.filter(pk=document.pk, upload_lease=lease).update(upload_lease_until=timezone.now())
+            return error(request, "Document storage is unavailable. Retry unchanged inputs.", 503)
+        with transaction.atomic():
+            current = Document.objects.select_for_update().get(pk=document.pk)
+            job = Job.objects.select_for_update().filter(pk=job.pk).first()
+            if current.status in {Document.Status.DELETING, Document.Status.DELETED, Document.Status.REJECTED} or (job is None and current.status == Document.Status.UPLOADING):
+                # A late successful PUT restores deletion intent, never another upload's state.
+                if current.status != Document.Status.REJECTED:
+                    current.status = Document.Status.DELETING
+                current.delete_after = timezone.now()
+                current.upload_lease_until = timezone.now()
+                current.save()
+                return error(request, "Document was deleted or rejected during upload.", 409)
+            if job is None:
+                return error(request, "Comparison was deleted during upload.", 409)
+            if current.status != Document.Status.UPLOADING or current.upload_lease != lease:
+                job.document = current
+                return JsonResponse(serialize_job(job), status=202)
+            current.status = Document.Status.PENDING
+            current.upload_lease = None
+            current.upload_lease_until = None
+            current.save()
+            now = timezone.now()
+            job.status = Job.Status.QUEUED
+            job.available_at = now
+            job.wake_at = now + timedelta(seconds=settings.JOB_WAKE_SECONDS)
+            job.deadline_at = now + timedelta(seconds=settings.JOB_DEADLINE_SECONDS)
+            job.save()
+            OutboxEvent.objects.create(job=job, available_at=now)
+            job.document = current
+    emit("job.accepted", request_id=job.request_id, job_id=job.id, document_id=job.document_id, stage="api", status="queued", attempt=0)
     return JsonResponse(serialize_job(job), status=202)
+
+
+def documents(request):
+    if not request.user.is_authenticated:
+        return error(request, "Sign in to continue.", 401)
+    if request.method != "GET":
+        return error(request, "Method not allowed.", 405)
+    records = Document.objects.filter(owner=request.user, expires_at__gt=timezone.now()).exclude(status=Document.Status.DELETED)[:100]
+    return JsonResponse({"documents": [serialize_document(document) for document in records]})
+
+
+def document_detail(request, document_id):
+    if not request.user.is_authenticated:
+        return error(request, "Sign in to continue.", 401)
+    if request.method != "DELETE":
+        return error(request, "Method not allowed.", 405)
+    with transaction.atomic():
+        document = Document.objects.select_for_update().filter(owner=request.user, pk=document_id).exclude(status=Document.Status.DELETED).first()
+        if document is None:
+            return error(request, "Not found.", 404)
+        tombstone(document)
+    emit("document.delete_requested", document_id=document.id, request_id=request.request_id, stage="api", status="deleting")
+    return JsonResponse({"deleted": str(document.id), "status": "deleting", "request_id": str(request.request_id)}, status=202)
+
+
+def document_download(request, document_id):
+    if not request.user.is_authenticated:
+        return error(request, "Sign in to continue.", 401)
+    if request.method != "GET":
+        return error(request, "Method not allowed.", 405)
+    document = Document.objects.filter(owner=request.user, pk=document_id, status=Document.Status.READY, expires_at__gt=timezone.now()).first()
+    if document is None:
+        return error(request, "Document is not available for download.", 404)
+    try:
+        data = get_original(document)
+    except DocumentUnavailable:
+        return error(request, "Document safety verification is unavailable. Try again later.", 503)
+    except DocumentError:
+        return error(request, "Document safety verification failed.", 409)
+    # Check again after object/scanner I/O so concurrent tombstones deny delivery.
+    if not Document.objects.filter(pk=document.pk, status=Document.Status.READY, expires_at__gt=timezone.now()).exists():
+        return error(request, "Document is no longer available.", 404)
+    response = FileResponse(io.BytesIO(data), as_attachment=True, filename=document.filename, content_type="application/octet-stream")
+    response["Cache-Control"] = "private, no-store"
+    response["X-Content-Type-Options"] = "nosniff"
+    return response
 
 
 def job_detail(request, job_id):
     if not request.user.is_authenticated:
         return error(request, "Sign in to continue.", 401)
     if request.method == "GET":
-        job = Job.objects.filter(owner=request.user, pk=job_id).select_related("match").first()
+        job = Job.objects.filter(owner=request.user, pk=job_id).filter(Q(document__isnull=True) | Q(document__expires_at__gt=timezone.now())).exclude(document__status__in=["deleting", "deleted"]).select_related("match", "document").first()
         if job is None:
             return error(request, "Not found.", 404)
         return JsonResponse(serialize_job(job))
