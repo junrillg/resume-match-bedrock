@@ -12,7 +12,7 @@ def pgpass_escape(value):
 Path("/tmp/pgpass").write_text(":".join(map(pgpass_escape, ["db", "5432", database, "lab_viewer", password])) + "\n")
 Path("/tmp/servers.json").write_text(json.dumps({"Servers": {"1": {
     "Name": "Resume Match (read only)", "Group": "Local lab", "Host": "db", "Port": 5432,
-    "MaintenanceDB": database, "Username": "lab_viewer", "SSLMode": "prefer",
-    "PassFile": "/var/lib/pgadmin/storage/lab_example.invalid/.pgpass",
+    "MaintenanceDB": database, "Username": "lab_viewer",
+    "ConnectionParameters": {"sslmode": "prefer", "passfile": "/var/lib/pgadmin/storage/lab_example.invalid/.pgpass"},
 }}}))
 os.execv("/entrypoint.sh", ["/entrypoint.sh"])

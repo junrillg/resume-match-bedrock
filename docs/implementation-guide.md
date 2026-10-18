@@ -74,9 +74,24 @@ outage, not every possible viewer failure mode.
 
 The live `clamdtop` terminal connected to `/tmp/clamd.sock`, displayed engine 1.5.4,
 signature database revision 28156 dated 2026-10-17 and an empty scan queue, then exited cleanly.
-**Pending:** authenticated, populated browser-screen review of RabbitMQ Management,
-Flower, pgAdmin and SeaweedFS admin. Their HTTP/API and permission checks passed;
-visual usability and displayed sample state are not yet verified.
+Authenticated browser review verified Flower's task/job identity mapping for the
+80% sample and rejected source, and SeaweedFS inventory for retained originals with
+matching document IDs and byte sizes. The rejected source had already been removed;
+quarantined-file visibility is a source-established privilege, not an observed file.
+RabbitMQ showed three ready deliveries, zero unacknowledged and zero consumers with
+the worker held; after restoration it showed zero ready/unacknowledged/total and
+one consumer, and the comparison completed at 80%. Ready delivery counts can include
+relay duplicates and do not count unique application jobs.
+
+Populated GUI review exposed two configuration gaps beyond health/API checks:
+RabbitMQ's base image disabled the management metrics collector; explicit local
+configuration now enables it. pgAdmin 9.17 ignored the old top-level `PassFile`;
+registration now uses supported `ConnectionParameters.passfile`, with a targeted
+repair of its generated saved connection. Passwords and unrelated registrations
+were preserved. One focused regression check passed for the pgAdmin import and
+private password-file contract; direct password-file authentication also passed.
+**Pending:** pgAdmin's final authenticated connection and populated record view.
+Direct database checks do not close the browser gate.
 
 ## Source handoffs
 

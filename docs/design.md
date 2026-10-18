@@ -77,13 +77,14 @@ alternative, never silently skipped.
 | --- | --- | --- | --- |
 | Complete service/viewer inventory and access design | Verified | ADR 0007, checked release sources and pinned images | Retain the complete inventory when services change |
 | Connected default startup and private, least-privilege access | Verified | 13 healthy services; auth/permission checks and 10 focused tests | Preserve existing secrets/volumes |
-| Meaningful task/queue/database/storage activity | Runtime verified; GUI review pending | Real success/rejection, default 80% with pgAdmin stopped, OpenObserve and clamdtop observations | Review populated RabbitMQ, Flower, pgAdmin and SeaweedFS screens after login |
-| Public operating reference and matching diagrams | Implemented | [Access/evidence reference](implementation-guide.md#service-inspection) and inspection diagram | Verify published diagram and finish pending GUI review |
+| Meaningful task/queue/database/storage activity | Runtime and three new GUIs verified; pgAdmin reconnect pending | Queue backlog/drain, Flower task/job mapping, retained object inventory, success/rejection and log/scanner views | Verify pgAdmin connection and populated records |
+| Public operating reference and matching diagrams | Verified | [Access/evidence reference](implementation-guide.md#service-inspection); published inspection diagram checked | Finish the remaining pgAdmin connection/record review |
 
 The design commit preceded **runtime viewers and focused tests** (`17ba0eb`);
 **operating docs, diagrams and final evidence** follow that runtime milestone.
-Authenticated populated browser review of the four new GUIs remains pending.
-Healthy containers and successful API checks do not close that requirement.
+RabbitMQ, Flower and SeaweedFS populated browser review passed. pgAdmin registration
+was corrected after the browser exposed its password-file configuration gap; final
+connection/record review remains pending. Successful direct SQL does not close that gate.
 The stack remains running for review.
 
 ## Failure boundaries

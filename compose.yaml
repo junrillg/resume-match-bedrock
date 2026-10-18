@@ -117,6 +117,7 @@ services:
     volumes:
       - rabbitmq-data:/var/lib/rabbitmq
       - ./viewing/enabled_plugins:/etc/rabbitmq/enabled_plugins:ro
+      - ./viewing/rabbitmq-management.conf:/etc/rabbitmq/conf.d/99-lab-management.conf:ro
     ports:
       - 127.0.0.1:15672:15672
     healthcheck:

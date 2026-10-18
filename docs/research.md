@@ -85,8 +85,8 @@ Cloud scanning uses [GuardDuty Malware Protection for S3](https://docs.aws.amazo
 
 The [inspection decision](decisions/0007-service-inspection.md) adds operating
 visibility to the existing services. These source and registry findings informed the runtime milestone. Container
-startup, authentication and permissions are now checked; populated browser review
-of the four new GUIs remains pending. [Runtime evidence](implementation-guide.md#inspection-evidence--2026-10-18)
+startup, authentication and permissions are now checked. Populated browser review
+verified RabbitMQ, Flower and SeaweedFS; pgAdmin reconnect remains pending. [Runtime evidence](implementation-guide.md#inspection-evidence--2026-10-18)
 is distinct from image availability.
 
 | Boundary and selected release | Primary source | Decision supported |
@@ -113,3 +113,15 @@ state, while this application's wrapper deliberately catches unexpected exceptio
 to prevent raw private failures reaching Celery formatting. A green Flower task
 therefore cannot establish a successful comparison or application retry semantics;
 inspect the durable job record and correlated lifecycle events too.
+
+Populated-screen checks exposed two release-specific integration details:
+
+- RabbitMQ Management's collector was disabled in the base image despite a healthy
+  plugin. [`rabbitmq-management.conf`](../viewing/rabbitmq-management.conf) enables
+  `management_agent.disable_metrics_collector = false`; observed queue counts now
+  distinguish held backlog from resumed consumption. [Management metric collection](https://www.rabbitmq.com/docs/management#disable-statistics-and-metric-collection).
+- pgAdmin 9.17 imports password-file configuration through
+  `ConnectionParameters.passfile`; the earlier top-level `PassFile` was ignored.
+  The generated registration now follows the versioned JSON contract; only that
+  saved registration was repaired. Final browser reconnect remains pending.
+  [pgAdmin 9.17 server import format](https://www.pgadmin.org/docs/pgadmin4/9.17/import_export_servers.html#json-format).

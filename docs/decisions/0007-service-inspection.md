@@ -1,8 +1,8 @@
 # ADR 0007: connected service inspection
 
 Status: accepted and implemented in `17ba0eb`. Runtime access, permissions and
-synthetic processing are verified; authenticated populated browser review of
-RabbitMQ Management, Flower, pgAdmin and SeaweedFS admin remains pending.
+synthetic processing are verified. Authenticated populated RabbitMQ, Flower and
+SeaweedFS views passed; pgAdmin final connection/record review remains pending.
 
 ## Context
 
@@ -76,8 +76,8 @@ visible as Compose completion states.
 
 Ten focused checks and real service/API observations passed, including an 80%
 default comparison while pgAdmin was stopped, an EICAR document rejection and the
-interactive scanner dashboard. Four new browser GUIs still require authenticated
-visual review. [Recorded evidence](../implementation-guide.md#inspection-evidence--2026-10-18)
+interactive scanner dashboard. RabbitMQ, Flower and SeaweedFS authenticated browser views passed; pgAdmin
+registration was corrected and awaits final connection/record review. [Recorded evidence](../implementation-guide.md#inspection-evidence--2026-10-18)
 distinguishes those checks.
 
 The stack gains local operating visibility and additional container/resource cost.

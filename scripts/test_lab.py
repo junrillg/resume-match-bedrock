@@ -5,6 +5,9 @@ import subprocess
 import tempfile
 import unittest
 import shutil
+import json
+import runpy
+from unittest.mock import patch
 
 
 class StartupBoundaryTests(unittest.TestCase):
@@ -77,6 +80,21 @@ class StartupBoundaryTests(unittest.TestCase):
             result = subprocess.run(["sh", str(script), "up"], env=env, capture_output=True, text=True)
             self.assertNotEqual(result.returncode, 0)
             self.assertEqual((root / "private-target").read_text(), original)
+
+
+class PgAdminConfigurationTests(unittest.TestCase):
+    def test_imported_connection_uses_private_passfile_parameter(self):
+        files = {}
+        script = Path(__file__).resolve().parents[1] / "viewing" / "pgadmin-start.py"
+        with patch.dict(os.environ, {"POSTGRES_DB": "synthetic_db", "POSTGRES_VIEWER_PASSWORD": "synthetic:pass\\word"}), \
+             patch("pathlib.Path.write_text", autospec=True, side_effect=lambda path, content: files.update({str(path): content})), \
+             patch("os.umask"), patch("os.execv") as launch:
+            runpy.run_path(str(script))
+        server = json.loads(files["/tmp/servers.json"])["Servers"]["1"]
+        self.assertEqual(server["ConnectionParameters"]["passfile"], "/var/lib/pgadmin/storage/lab_example.invalid/.pgpass")
+        self.assertNotIn("PassFile", server)
+        self.assertEqual(files["/tmp/pgpass"], "db:5432:synthetic_db:lab_viewer:synthetic\\:pass\\\\word\n")
+        launch.assert_called_once_with("/entrypoint.sh", ["/entrypoint.sh"])
 
 
 if __name__ == "__main__":
