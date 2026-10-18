@@ -2,7 +2,7 @@
 
 The system preserves an uploaded original, processes comparisons independently of the browser and returns checked evidence with an application-owned score. Its core boundaries are durable source storage, recoverable dispatch, fenced results and owner-controlled retrieval/deletion.
 
-![Seven-step local execution and concurrent result reads.](assets/architecture.svg)
+![Seven-step local execution and concurrent result reads.](https://raw.githubusercontent.com/junrillg/resume-match-bedrock/8aaace9d884240208ecd9d07bdfd8ace2b1c1271/docs/assets/architecture.svg)
 
 ## Requirements and data ownership
 

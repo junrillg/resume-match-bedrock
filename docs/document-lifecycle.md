@@ -2,7 +2,7 @@
 
 Original bytes belong in private object storage; the database owns identity and application state. A comparison references a retained document, allowing another requirement set or explicit reprocessing without asking the owner to upload again.
 
-![Document source and application-record boundaries.](assets/document-lifecycle.svg?v=durable-originals-20261018)
+![Document source and application-record boundaries.](https://raw.githubusercontent.com/junrillg/resume-match-bedrock/8aaace9d884240208ecd9d07bdfd8ace2b1c1271/docs/assets/document-lifecycle.svg)
 
 ## What is retained
 

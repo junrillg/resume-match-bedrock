@@ -2,7 +2,7 @@
 
 A reviewer uploads or reuses a résumé, requests weighted evidence analysis and receives a report. Object storage preserves the original; PostgreSQL owns identity, lifecycle, dispatch intent and results. The browser reads persisted status while processing runs independently.
 
-![Local seven-step request, dispatch, worker and result flow.](assets/architecture.svg?v=durable-originals-20261018)
+![Local seven-step request, dispatch, worker and result flow.](https://raw.githubusercontent.com/junrillg/resume-match-bedrock/8aaace9d884240208ecd9d07bdfd8ace2b1c1271/docs/assets/architecture.svg)
 
 The canonical steps are **1 Submit · 2 Accept · 3 Relay · 4 Queue · 5 Process · 6 Save · 7 Read**. Solid arrows carry work; dashed arrows show concurrent reads or diagnostic metadata. [Requirements and decisions](design.md) establish the scope.
 
@@ -79,7 +79,7 @@ Polling starts after a one-second delay, with a ten-second request timeout; a fa
 
 ## Stored originals and lifecycle
 
-![Original-object and database lifecycle from upload through retrieval, reuse and deletion.](assets/document-lifecycle.svg?v=durable-originals-20261018)
+![Original-object and database lifecycle from upload through retrieval, reuse and deletion.](https://raw.githubusercontent.com/junrillg/resume-match-bedrock/8aaace9d884240208ecd9d07bdfd8ace2b1c1271/docs/assets/document-lifecycle.svg)
 
 Owners can download a ready original through an authorized, attachment-only, no-store response, create further comparisons or reprocess. Document deletion/expiry first blocks access and fences related jobs, then the relay retries physical deletion. Deleting an established comparison preserves its original. Cancelling the initial unfinished upload instead schedules that unready source for cleanup. [Lifecycle and cross-store recovery →](document-lifecycle.md)
 

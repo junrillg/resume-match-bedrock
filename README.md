@@ -2,7 +2,7 @@
 
 Reviewers upload or reuse a résumé, set weighted requirements and receive a coverage score with supporting source quotes. Private object storage retains the original; PostgreSQL owns document identity, processing state and results. Background processing stays independent of the browser request.
 
-![Seven business steps: submit, reserve/store/admit, relay, queue, fetch and process, save, then read the report.](docs/assets/architecture.svg?v=durable-originals-20261018)
+![Seven business steps: submit, reserve/store/admit, relay, queue, fetch and process, save, then read the report.](https://raw.githubusercontent.com/junrillg/resume-match-bedrock/8aaace9d884240208ecd9d07bdfd8ace2b1c1271/docs/assets/architecture.svg)
 
 ## One comparison, end to end
 
@@ -18,7 +18,7 @@ A queued receipt confirms stored source and dispatch intent. A concurrent replay
 
 ## Original files and application records
 
-![Upload, storage, scan, processing, reuse and deletion boundaries.](docs/assets/document-lifecycle.svg?v=durable-originals-20261018)
+![Upload, storage, scan, processing, reuse and deletion boundaries.](https://raw.githubusercontent.com/junrillg/resume-match-bedrock/8aaace9d884240208ecd9d07bdfd8ace2b1c1271/docs/assets/document-lifecycle.svg)
 
 The local flow uses persistent SeaweedFS S3-compatible storage, ClamAV, PostgreSQL and RabbitMQ. Originals, extracted text and associated results follow the configurable **90-day** project policy. Owners can download clean originals, compare them again, reprocess them or request deletion. [Document lifecycle →](docs/document-lifecycle.md)
 
