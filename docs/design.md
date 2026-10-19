@@ -110,4 +110,10 @@ The [research](research.md) supports these choices. Passing local checks and moc
 
 ## Processing and completion journey
 
+The next transport milestone is governed by [ADR 0009](decisions/0009-event-driven-completion.md):
+**one million simultaneous users**, dedicated asynchronous SSE delivery, durable event
+recovery and bounded event-driven reads. Its deployment target and measured local
+capacity are separate. The existing polling transport below remains the shipped state
+until that runnable milestone passes; the ADR records the replacement and its checks.
+
 [ADR 0008](decisions/0008-nonblocking-completion.md) defines the shipped processing, inbox and result routes. Action pending state is separate from worker progress; saved completion notices survive leaving the page. A paused-worker browser run verified a second submission, an unchanged off-route draft, explicit notification access, result refresh, read persistence and completion while the app tab was closed. The design, durable inbox and UI were verified and published as separate milestones.
