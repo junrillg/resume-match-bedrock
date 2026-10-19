@@ -29,6 +29,9 @@ or an in-memory durability substitute. [Delivery design and measured local envel
 The local run verifies 1,000 connected owners and one real queued comparison. It does
 not measure the target processing rate or million-user capacity. Deployment sizes and
 capacity evidence remain distinct from the implemented mechanisms.
+The next deployment milestone follows [ADR 0010](decisions/0010-bounded-deployment.md):
+small initial replicas, independently scalable SSE/fan-out, bounded database and
+processing supply, and credential-free infrastructure checks.
 
 ## Flow and consistency
 
