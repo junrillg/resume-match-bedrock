@@ -6,6 +6,29 @@ Read these four diagrams alongside [the exact function at revision 5b74706](http
 
 These diagrams cover every explicit branch in the selected function, lines 283–396. Helper internals, unexpected exceptions and deployment behavior are outside this function-level map. HTTP 202 returns the current job; it can still be uploading, processing, completed or failed. Creating this reference does not answer the pending learner checkpoint.
 
+## Simple overview — start here
+
+For a résumé submission, remember: **check → reserve → upload → queue → respond**.
+
+```mermaid
+flowchart TD
+    A["Submit résumé"] --> B["Check input and prevent duplicates"]
+    B --> C{"Can we return an existing job?"}
+    C -->|Yes| R["Return that job"]
+    C -->|No| D["Create or resume an upload reservation"]
+    D --> E["Upload original to storage<br>Skip for a saved document"]
+    E --> F["Check upload still belongs to this attempt"]
+    F --> G["Save queued job + outbox event"]
+    G --> H["Return job status to browser"]
+```
+
+- **Retry:** unchanged submissions reuse the same job.
+- **Safety:** invalid requests are rejected; an old upload cannot finalize a newer attempt.
+- **Next:** the relay sends queued work to RabbitMQ and Celery. Scoring happens later.
+
+This is the main submission flow. Errors return early; GET requests simply list jobs. The detailed diagrams below explain those branches.
+
+
 ## 1. Request routing and validation
 
 [Code: lines 283–308](https://github.com/junrillg/resume-match-bedrock/blob/5b74706828b6aaa35f61bfce563aa0f6dc6e7065/backend/matching/views.py#L283)
