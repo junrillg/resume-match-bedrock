@@ -1,24 +1,29 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import App, { MatchResult } from './App';
-import type { DocumentRecord, Job, Match, Session } from './api';
+import type { CompletionNotification, DocumentRecord, Job, Match, Session } from './api';
 
 const report: Match = {
-  id: 'report-1', job_title: 'Full stack engineer', score: 60, provider: 'demo',
+  id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', job_title: 'Full stack engineer', score: 60, provider: 'demo',
   created_at: '2026-01-01T12:00:00Z', request_id: 'request-123',
   requirements: [
     { skill: 'Python', weight: 3, matched: true, evidence: 'Built Python services.' },
     { skill: 'PostgreSQL', weight: 2, matched: false, evidence: null },
   ],
 };
-const queued: Job = { id: 'job-1', job_title: report.job_title, status: 'queued', attempts: 0, created_at: report.created_at, request_id: report.request_id, error_code: null, match: null, document: null };
+const queued: Job = { id: '11111111-1111-4111-8111-111111111111', job_title: report.job_title, status: 'queued', attempts: 0, created_at: report.created_at, request_id: report.request_id, error_code: null, match: null, document: null };
 const signedIn: Session = { authenticated: true, username: 'reviewer', csrfToken: 'rotated-token', provider: 'demo', document_retention_days: 90 };
 const anonymous: Session = { authenticated: false, csrfToken: 'anonymous-token', provider: 'demo', document_retention_days: 90 };
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
 
 function server(session = signedIn, jobs: Job[] = []) {
   const state = {
-    session, jobs, matches: [] as Match[], documents: [] as DocumentRecord[],
+    session, jobs, matches: [] as Match[], documents: [] as DocumentRecord[], notifications: [] as CompletionNotification[],
+    deletedDocuments: new Set<string>(),
+    deleteDocument: async (id: string): Promise<Response> => { const related = state.jobs.filter((job) => job.document?.id === id).map((job) => job.id); state.deletedDocuments.add(id); state.documents = state.documents.filter((item) => item.id !== id); state.jobs = state.jobs.filter((job) => !related.includes(job.id)); state.matches = []; state.notifications = state.notifications.filter((notice) => !related.includes(notice.job_id)); return json({ deleted: true, status: 'deleting' }, 202); },
+    deleteJob: async (id: string): Promise<Response> => { state.jobs = state.jobs.filter((job) => job.id !== id); state.matches = []; state.notifications = state.notifications.filter((notice) => notice.job_id !== id); return json({ deleted: true }); },
+    readDetail: async (id: string): Promise<Response> => { const job = state.jobs.find((item) => item.id === id); return job ? json(job) : json({ error: 'Not found.' }, 404); },
+    readNotifications: async (offset: number): Promise<Response> => json({ notifications: state.notifications.slice(offset, offset + 100), unread_count: state.notifications.filter((item) => !item.read_at).length, next_offset: state.notifications.length > offset + 100 ? offset + 100 : null }),
     post: async (_options: RequestInit) => json(queued, 202),
     readJobs: async (): Promise<Response> => json({ jobs: state.jobs }),
     readDocuments: async (): Promise<Response> => json({ documents: state.documents }),
@@ -28,12 +33,16 @@ function server(session = signedIn, jobs: Job[] = []) {
     if (url === '/api/session/') return json(state.session);
     if (url === '/api/login/') { state.session = signedIn; return json(signedIn); }
     if (url === '/api/logout/') { state.session = anonymous; return json(anonymous); }
-    if (url === '/api/jobs/' && options.method === 'POST') return state.post(options);
+    if (url === '/api/jobs/' && options.method === 'POST') { const response = await state.post(options); if (response.ok) { const job = await response.clone().json() as Job; if (!job.document || !state.deletedDocuments.has(job.document.id)) state.jobs = [job, ...state.jobs.filter((item) => item.id !== job.id)]; } return response; }
+    if (url.startsWith('/api/notifications/?')) return state.readNotifications(Number(url.split('offset=')[1]));
+    if (url.startsWith('/api/notifications/') && options.method === 'POST') { const id = url.split('/')[3]; const notice = state.notifications.find((item) => item.id === id); if (!notice) return json({ error: 'Not found.' }, 404); notice.read_at = '2026-10-19T00:00:00Z'; return json(notice); }
+    if (/^\/api\/jobs\/[^/]+\/$/.test(url) && !options.method) return state.readDetail(url.split('/')[3]);
     if (url === '/api/jobs/') return state.readJobs();
     if (url === '/api/documents/') return state.readDocuments();
     if (url.endsWith('/download/')) return state.download();
-    if (url.startsWith('/api/documents/') && options.method === 'DELETE') { state.documents = []; state.jobs = []; state.matches = []; return json({ deleted: true, status: 'deleting' }, 202); }
+    if (url.startsWith('/api/documents/') && options.method === 'DELETE') return state.deleteDocument(url.split('/')[3]);
     if (url === '/api/matches/') return json({ matches: state.matches });
+    if (url.startsWith('/api/jobs/') && options.method === 'DELETE') return state.deleteJob(url.split('/')[3]);
     if (options.method === 'DELETE') { state.jobs = []; state.matches = []; return json({ deleted: true }); }
     throw new Error(`Unexpected request: ${url}`);
   });
@@ -41,7 +50,7 @@ function server(session = signedIn, jobs: Job[] = []) {
   return { state, fetcher };
 }
 async function mount() { await act(async () => { render(<App />); }); }
-async function click(name: string | RegExp) { await act(async () => { fireEvent.click(screen.getByRole('button', { name })); }); }
+async function click(name: string | RegExp) { await act(async () => { fireEvent.click(screen.queryByRole('button', { name }) ?? screen.getByRole('link', { name })); }); }
 async function tick(milliseconds = 1000) { await act(async () => { await vi.advanceTimersByTimeAsync(milliseconds); }); }
 async function login() {
   fireEvent.change(screen.getByLabelText('Username'), { target: { value: 'reviewer' } });
@@ -49,9 +58,11 @@ async function login() {
   await click('Sign in');
 }
 beforeEach(() => {
+  window.history.replaceState(null, '', '/');
+  vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible'); vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(true);
   vi.useFakeTimers(); vi.stubGlobal('requestAnimationFrame', () => 0);
 });
-afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 it('shows server-owned coverage, excerpts, and honest document gaps', () => {
   render(<MatchResult match={report} busy={false} onDelete={() => {}} />);
@@ -74,12 +85,11 @@ it('uses rotated CSRF, polls queued/running to success, stops, and confirms dele
   state.jobs = [{ ...queued, status: 'running', attempts: 1 }]; await tick();
   expect(screen.getByText(/A worker is extracting/)).toBeTruthy();
   state.jobs = [{ ...queued, status: 'succeeded', attempts: 1, match: report }]; await tick();
-  expect(screen.getByRole('meter')).toBeTruthy(); expect(screen.getByText('job-1')).toBeTruthy();
+  expect(screen.getByRole('meter')).toBeTruthy(); expect(screen.getByText('11111111-1111-4111-8111-111111111111')).toBeTruthy();
   const count = fetcher.mock.calls.length; await tick(5000); expect(fetcher.mock.calls).toHaveLength(count);
   await click('Delete this report'); expect(fetcher.mock.calls).toHaveLength(count);
   await click('Delete comparison'); expect(screen.queryByRole('meter')).toBeNull();
-  expect(fetcher.mock.calls.at(-1)![0]).toBe('/api/jobs/job-1/');
-  expect(fetcher.mock.calls.at(-1)![1].method).toBe('DELETE');
+  expect(fetcher.mock.calls.some(([url, options]) => url === '/api/jobs/11111111-1111-4111-8111-111111111111/' && options.method === 'DELETE')).toBe(true);
 });
 
 it('reuses the key after ambiguous transport failure and rotates for changed inputs', async () => {
@@ -99,13 +109,13 @@ it('reuses the key after ambiguous transport failure and rotates for changed inp
   expect(screen.queryByRole('meter')).toBeNull();
 });
 
-it('restores pending work and pauses/resumes monitoring without falsely failing the job', async () => {
+it('restores pending work and backs off/resumes monitoring without falsely failing the job', async () => {
   const { state, fetcher } = server(signedIn, [queued]);
-  await mount(); expect(screen.getByText('job-1')).toBeTruthy();
+  await mount(); await click(/Full stack engineer.*queued/); expect(screen.getByText('11111111-1111-4111-8111-111111111111')).toBeTruthy();
   state.readJobs = async () => { throw new TypeError('offline'); }; await tick();
   expect(screen.getByText('Status updates paused.')).toBeTruthy();
   expect(screen.getByText(/Your job has not been marked failed/)).toBeTruthy();
-  const count = fetcher.mock.calls.length; await tick(5000); expect(fetcher.mock.calls).toHaveLength(count);
+  const count = fetcher.mock.calls.length; await tick(5000); expect(fetcher.mock.calls.length).toBeGreaterThan(count);
   state.readJobs = async () => json({ jobs: [{ ...queued, status: 'succeeded', match: report }] });
   await click('Resume status updates'); await tick(); expect(screen.getByRole('meter')).toBeTruthy();
 });
@@ -137,7 +147,7 @@ it('ties upload retries to document contents instead of filename and submits onl
 
 it('aborts a hung status request after ten seconds and pauses updates', async () => {
   const { state, fetcher } = server(signedIn, [queued]);
-  await mount();
+  await mount(); await click(/Full stack engineer.*queued/);
   state.readJobs = () => new Promise((_resolve, reject) => {
     const signal = fetcher.mock.calls.filter(([url]) => url === '/api/jobs/').at(-1)![1].signal!;
     signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
@@ -148,15 +158,15 @@ it('aborts a hung status request after ten seconds and pauses updates', async ()
 });
 
 it('does not restore a deleted pending job from an older in-flight poll', async () => {
-  const other = { ...queued, id: 'job-2', job_title: 'Another pending role' };
+  const other = { ...queued, id: '22222222-2222-4222-8222-222222222222', job_title: 'Another pending role' };
   const { state } = server(signedIn, [queued, other]);
-  await mount(); let complete!: (response: Response) => void;
+  await mount(); await click(/Full stack engineer.*queued/); let complete!: (response: Response) => void;
   state.readJobs = () => new Promise((resolve) => { complete = resolve; }); await tick();
   await click('Delete this comparison'); await click('Delete comparison');
   await act(async () => { complete(json({ jobs: [queued, other] })); });
-  expect(screen.queryByText('job-1')).toBeNull();
-  expect(screen.getByRole('button', { name: /Another pending role/ })).toBeTruthy();
-  expect(screen.queryByRole('button', { name: /Full stack engineer.*queued/ })).toBeNull();
+  expect(screen.queryByText('11111111-1111-4111-8111-111111111111')).toBeNull();
+  expect(screen.getByRole('link', { name: /Another pending role/ })).toBeTruthy();
+  expect(screen.queryByRole('link', { name: /Full stack engineer.*queued/ })).toBeNull();
 });
 
 it('clears private drafts/keys on auth loss and ignores an old submission response', async () => {
@@ -180,7 +190,7 @@ it('keeps legacy reports accessible and deletes them through the report endpoint
   const { state, fetcher } = server(); state.matches = [report];
   await mount(); await click(/Full stack engineer.*60%/); expect(screen.getByRole('meter')).toBeTruthy();
   await click('Delete this report'); await click('Delete comparison');
-  expect(fetcher.mock.calls.at(-1)![0]).toBe('/api/matches/report-1/');
+  expect(fetcher.mock.calls.some(([url, options]) => url === '/api/matches/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/' && options.method === 'DELETE')).toBe(true);
 });
 
 it('cancels polling on unmount and ignores a response that finishes afterward', async () => {
@@ -211,9 +221,8 @@ it('makes a hung admission request retryable with the same idempotency key', asy
 it('preserves an ambiguous submission key when an unrelated report is deleted', async () => {
   const { state, fetcher } = server(); state.matches = [report];
   state.post = async () => { throw new TypeError('response lost'); };
-  await mount(); await click(/Full stack engineer.*60%/);
-  await click(/Use synthetic sample/); await click(/Analyze evidence/);
-  await click('Delete this report'); await click('Delete comparison');
+  await mount(); await click(/Use synthetic sample/); await click(/Analyze evidence/);
+  await click(/Full stack engineer.*60%/); await click('Delete this report'); await click('Delete comparison');
   state.post = async () => json({ ...queued, status: 'failed', error_code: 'provider_rejected' }, 202);
   await click('Retry same comparison');
   const posts = fetcher.mock.calls.filter(([, options]) => options.method === 'POST');
@@ -235,7 +244,7 @@ it.each([
 
 it('shows the configured log viewer and omits the link when unavailable', async () => {
   const { state } = server({ ...signedIn, log_viewer_url: 'http://127.0.0.1:5080' }, [queued]);
-  await mount();
+  await mount(); await click(/Full stack engineer.*queued/); fireEvent.click(screen.getByText('Source and processing reference'));
   expect(screen.getByRole('link', { name: /OpenObserve log viewer/ }).getAttribute('href')).toBe('http://127.0.0.1:5080');
   cleanup();
   state.session = signedIn;
@@ -257,6 +266,7 @@ it('submits a saved source without new bytes and rotates the key for explicit re
   expect((first.body as FormData).get('reprocess')).toBe('false');
   expect((first.body as FormData).has('resume')).toBe(false);
   expect((first.body as FormData).has('resume_text')).toBe(false);
+  await click('New comparison');
   fireEvent.click(screen.getByLabelText('Re-extract the original instead of using saved text'));
   await click('Analyze evidence');
   const second = fetcher.mock.calls.filter(([url, options]) => url === '/api/jobs/' && options.method === 'POST')[1][1];
@@ -302,7 +312,7 @@ it('confirms source deletion separately and rejects a stale poll restoring its r
   await click('Delete original and reports');
   await act(async () => { complete(json({ jobs: [linked] })); });
   expect(screen.queryByText('saved-original.txt')).toBeNull();
-  expect(screen.queryByText('job-1')).toBeNull();
+  expect(screen.queryByText('11111111-1111-4111-8111-111111111111')).toBeNull();
   expect(screen.queryByRole('meter')).toBeNull();
   expect(fetcher.mock.calls.some(([url, options]) => url === '/api/documents/doc-1/' && options.method === 'DELETE')).toBe(true);
 });
@@ -335,7 +345,7 @@ it('handles download safety failures inline and clears private sources on a down
 it('restores uploading receipts as active work and explains source replay instead of claiming completion', async () => {
   const { state } = server(signedIn, [{ ...queued, status: 'uploading', document: { ...stored, status: 'uploading' } }]);
   state.documents = [{ ...stored, status: 'uploading' }];
-  await mount();
+  await mount(); await click(/Full stack engineer.*uploading/);
   expect(screen.getByText(/The original upload is incomplete/)).toBeTruthy();
   state.jobs = [{ ...queued, status: 'succeeded', document: stored, match: report }]; state.documents = [stored];
   await tick();
@@ -350,4 +360,208 @@ it('explains unavailable originals for legacy jobs and renders long source filen
   await click(/Full stack engineer.*60%/);
   expect(screen.getByText('Original unavailable for this earlier comparison.')).toBeTruthy();
   expect(screen.getByRole('heading', { name: filename })).toBeTruthy();
+});
+
+const completedNotice: CompletionNotification = {
+  id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', job_id: queued.id, job_title: queued.job_title,
+  status: 'succeeded', created_at: '2026-10-19T00:00:00Z', read_at: null, href: `/results/${queued.id}`,
+};
+async function openInbox() { await click(/^Notifications \d+ unread$/); }
+async function popTo(path: string) {
+  await act(async () => { window.history.pushState(null, '', path); window.dispatchEvent(new PopStateEvent('popstate')); });
+}
+
+it('leaves accepted work to complete off-route without interrupting another draft, then opens its notification', async () => {
+  const { state } = server();
+  await mount(); await click(/Use synthetic sample/); await click('Analyze evidence');
+  expect(window.location.pathname).toBe(`/jobs/${queued.id}`);
+  expect((screen.getByRole('button', { name: 'Sign out' }) as HTMLButtonElement).disabled).toBe(false);
+  await click('New comparison');
+  fireEvent.change(screen.getByLabelText('Role title'), { target: { value: 'Draft for another role' } });
+  state.jobs = [{ ...queued, status: 'succeeded', match: report }]; state.notifications = [completedNotice];
+  await tick();
+  expect(window.location.pathname).toBe('/');
+  expect((screen.getByLabelText('Role title') as HTMLInputElement).value).toBe('Draft for another role');
+  expect(screen.queryByRole('meter')).toBeNull();
+  expect(screen.getByText('1 comparison has an update.')).toBeTruthy();
+  await openInbox(); await click(/Full stack engineerReport ready/);
+  expect(window.location.pathname).toBe(`/results/${queued.id}`);
+  expect(screen.getByRole('meter')).toBeTruthy();
+});
+
+it('advances only the currently viewed processing job and supports real Back navigation', async () => {
+  const { state } = server(signedIn, [queued]);
+  await mount(); await click(/Full stack engineer.*queued/);
+  state.jobs = [{ ...queued, status: 'succeeded', match: report }]; await tick();
+  expect(window.location.pathname).toBe(`/results/${queued.id}`);
+  await click('New comparison');
+  await act(async () => { window.history.back(); await vi.advanceTimersByTimeAsync(1); });
+  expect(window.location.pathname).toBe(`/results/${queued.id}`);
+  expect(screen.getByRole('meter')).toBeTruthy();
+});
+
+it('keeps navigation and signout available during deferred admission and never redirects a user who left', async () => {
+  const { state } = server(); let finish!: (response: Response) => void;
+  state.post = () => new Promise((resolve) => { finish = resolve; });
+  await mount(); await click(/Use synthetic sample/); await click('Analyze evidence');
+  expect((screen.getByRole('button', { name: 'Sign out' }) as HTMLButtonElement).disabled).toBe(false);
+  await openInbox();
+  await act(async () => { finish(json(queued, 202)); });
+  expect(window.location.pathname).toBe('/notifications');
+  expect(screen.queryByRole('heading', { name: 'Comparison in progress' })).toBeNull();
+  expect(screen.getByRole('link', { name: /Full stack engineer.*queued/ })).toBeTruthy();
+  await click('New comparison');
+  expect((screen.getByLabelText('Résumé text') as HTMLTextAreaElement).value).toContain('SYNTHETIC SAMPLE');
+});
+
+it('drops a late accepted job after explicit signout', async () => {
+  const { state } = server(); let finish!: (response: Response) => void;
+  state.post = () => new Promise((resolve) => { finish = resolve; });
+  await mount(); await click(/Use synthetic sample/); await click('Analyze evidence'); await click('Sign out');
+  await act(async () => { finish(json(queued, 202)); });
+  expect(screen.getByRole('heading', { name: 'Sign in to review a résumé' })).toBeTruthy();
+  expect(screen.queryByText(queued.id)).toBeNull(); expect(window.location.pathname).toBe('/');
+});
+
+it('loads a direct processing or result URL through detail authorization even outside recent history', async () => {
+  const { state, fetcher } = server();
+  const deep = { ...queued, id: 'abcdef12-abcd-4abc-8def-abcdef123456' };
+  window.history.replaceState(null, '', `/JOBS/${deep.id.toUpperCase()}`);
+  state.readDetail = async () => json({ ...deep, status: 'succeeded', match: report });
+  await mount();
+  expect(window.location.pathname).toBe(`/results/${deep.id}`);
+  expect(screen.getByRole('meter')).toBeTruthy();
+  expect(fetcher.mock.calls.some(([url]) => url === `/api/jobs/${deep.id}/`)).toBe(true);
+});
+
+it('keeps an unavailable deep link private and rejects non-UUID paths without a detail request', async () => {
+  const { fetcher } = server(); window.history.replaceState(null, '', `/results/${queued.id}`);
+  await mount(); expect(screen.getByRole('heading', { name: 'Comparison unavailable' })).toBeTruthy();
+  expect(screen.queryByRole('meter')).toBeNull(); cleanup();
+  window.history.replaceState(null, '', '/jobs/not-a-valid-id'); const count = fetcher.mock.calls.filter(([url]) => url.startsWith('/api/jobs/')).length;
+  await mount(); expect(screen.getByRole('heading', { name: 'We couldn’t find that page' })).toBeTruthy();
+  expect(fetcher.mock.calls.filter(([url]) => url.startsWith('/api/jobs/'))).toHaveLength(count + 1);
+});
+
+it('renders terminal failure without a report and links its saved notification to that job', async () => {
+  const { state } = server(signedIn, [{ ...queued, status: 'failed', error_code: 'retry_exhausted' }]);
+  state.notifications = [{ ...completedNotice, status: 'failed', href: `/jobs/${queued.id}` }];
+  await mount(); await openInbox(); await click(/Full stack engineerProcessing stopped/);
+  expect(window.location.pathname).toBe(`/jobs/${queued.id}`);
+  expect(screen.getByText('Processing stopped after the allowed retry attempts.')).toBeTruthy();
+  expect(screen.queryByRole('meter')).toBeNull();
+});
+
+it('reconciles a completion when returning online even with no previously known active jobs', async () => {
+  const { state, fetcher } = server();
+  const online = vi.spyOn(navigator, 'onLine', 'get'); const visibility = vi.spyOn(document, 'visibilityState', 'get');
+  await mount(); const count = fetcher.mock.calls.length;
+  visibility.mockReturnValue('hidden'); await act(async () => { document.dispatchEvent(new Event('visibilitychange')); });
+  state.jobs = [{ ...queued, status: 'succeeded', match: report }]; state.notifications = [completedNotice];
+  await tick(30000); expect(fetcher.mock.calls).toHaveLength(count);
+  online.mockReturnValue(false); visibility.mockReturnValue('visible'); await act(async () => { document.dispatchEvent(new Event('visibilitychange')); });
+  await tick(30000); expect(fetcher.mock.calls).toHaveLength(count);
+  online.mockReturnValue(true); await act(async () => { window.dispatchEvent(new Event('online')); });
+  expect(screen.getByText('1 comparison has an update.')).toBeTruthy();
+  expect(window.location.pathname).toBe('/');
+});
+
+it('does not overlap monitoring requests while a previous refresh is still pending', async () => {
+  const { state, fetcher } = server(signedIn, [queued]); let finish!: (response: Response) => void;
+  await mount(); state.readJobs = () => new Promise((resolve) => { finish = resolve; }); await tick();
+  const count = fetcher.mock.calls.filter(([url]) => url === '/api/jobs/').length;
+  await act(async () => { window.dispatchEvent(new Event('focus')); window.dispatchEvent(new Event('online')); });
+  await tick(3000); expect(fetcher.mock.calls.filter(([url]) => url === '/api/jobs/')).toHaveLength(count);
+  state.readJobs = async () => json({ jobs: state.jobs });
+  await act(async () => { finish(json({ jobs: state.jobs })); }); await tick(1);
+  expect(fetcher.mock.calls.filter(([url]) => url === '/api/jobs/')).toHaveLength(count + 1);
+});
+
+it('persists read acknowledgement with CSRF and restores it after remount', async () => {
+  const { state, fetcher } = server(); state.notifications = [{ ...completedNotice }];
+  await mount(); await openInbox(); await click('Mark as read');
+  expect(screen.getByText('0 unread', { selector: '.inbox .section-heading > span' })).toBeTruthy();
+  const acknowledgement = fetcher.mock.calls.find(([url, options]) => url === `/api/notifications/${completedNotice.id}/read/` && options.method === 'POST')!;
+  expect(new Headers(acknowledgement[1].headers).get('X-CSRFToken')).toBe('rotated-token');
+  cleanup(); await mount(); expect(screen.queryByRole('button', { name: 'Mark as read' })).toBeNull();
+  expect(screen.getByRole('link', { name: /Full stack engineerReport ready/ }).getAttribute('href')).toBe(`/results/${queued.id}`);
+});
+
+it('merges older inbox pages without duplicates, then refreshes their window when returning', async () => {
+  const { state } = server();
+  state.notifications = Array.from({ length: 101 }, (_, index) => ({ ...completedNotice, id: `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`, job_title: `Finished role ${index}` }));
+  await mount(); await openInbox(); await click('Load older updates');
+  expect(screen.getByRole('link', { name: 'Finished role 100Report ready' })).toBeTruthy();
+  await tick(15000); expect(screen.getAllByRole('link', { name: /Finished role/ })).toHaveLength(101);
+  await act(async () => { window.dispatchEvent(new Event('focus')); });
+  expect(screen.queryByRole('link', { name: 'Finished role 100Report ready' })).toBeNull();
+  expect(screen.getByRole('button', { name: 'Load older updates' })).toBeTruthy();
+});
+
+it('does not resurrect an original or navigate from a delayed admission after that source is deleted', async () => {
+  const { state } = server(); state.documents = [stored]; let finish!: (response: Response) => void;
+  state.post = () => new Promise((resolve) => { finish = resolve; });
+  await mount(); await click('Use source'); await click('Analyze evidence'); await click('Delete original'); await click('Delete original and reports');
+  await act(async () => { finish(json({ ...queued, document: stored }, 202)); });
+  expect(screen.queryByText('saved-original.txt')).toBeNull();
+  expect(screen.queryByRole('link', { name: /Full stack engineer.*queued/ })).toBeNull();
+  expect(window.location.pathname).toBe('/'); expect(screen.getByText(/source for this comparison was deleted/)).toBeTruthy();
+});
+
+it('preserves a newly selected source while an unrelated original deletion is pending', async () => {
+  const other = { ...stored, id: 'doc-2', filename: 'other-source.txt' };
+  const { state } = server(); state.documents = [stored, other];
+  let finish!: () => void; const remove = state.deleteDocument;
+  state.deleteDocument = async (id) => { await new Promise<void>((resolve) => { finish = resolve; }); return remove(id); };
+  await mount(); const sourceA = screen.getByRole('heading', { name: stored.filename }).closest('li')!;
+  const sourceB = screen.getByRole('heading', { name: other.filename }).closest('li')!;
+  await act(async () => { fireEvent.click(within(sourceA).getByRole('button', { name: 'Use source' })); fireEvent.click(within(sourceA).getByRole('button', { name: 'Delete original' })); });
+  await click('Delete original and reports');
+  await act(async () => { fireEvent.click(within(sourceB).getByRole('button', { name: 'Use source' })); finish(); });
+  expect((screen.getByLabelText('Choose a saved source') as HTMLSelectElement).value).toBe('doc-2');
+  expect(screen.queryByRole('heading', { name: stored.filename })).toBeNull();
+});
+
+it('keeps a newer deep-linked comparison visible after an older deletion completes', async () => {
+  const other = { ...queued, id: '22222222-2222-4222-8222-222222222222', job_title: 'Independent deep-linked job' };
+  const { state } = server(signedIn, [queued]); let finish!: () => void; const remove = state.deleteJob;
+  state.readDetail = async (id) => json(id === other.id ? other : queued);
+  state.deleteJob = async (id) => { await new Promise<void>((resolve) => { finish = resolve; }); return remove(id); };
+  await mount(); await click(/Full stack engineer.*queued/); await click('Delete this comparison'); await click('Delete comparison');
+  await popTo(`/jobs/${other.id}`); expect(screen.getByRole('heading', { name: other.job_title })).toBeTruthy();
+  await act(async () => { finish(); });
+  expect(window.location.pathname).toBe(`/jobs/${other.id}`); expect(screen.getByRole('heading', { name: other.job_title })).toBeTruthy();
+});
+
+it('releases a pending original download after an unrelated notification acknowledgement', async () => {
+  const { state } = server(); state.documents = [stored]; state.notifications = [{ ...completedNotice }];
+  let finish!: (response: Response) => void; state.download = () => new Promise((resolve) => { finish = resolve; });
+  const create = vi.fn(() => 'blob:synthetic-only');
+  class BrowserURL extends URL { static createObjectURL = create; static revokeObjectURL = vi.fn(); }
+  vi.stubGlobal('URL', BrowserURL); vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+  await mount(); await click('Download original'); await openInbox(); await click('Mark as read');
+  await act(async () => { finish(new Response('synthetic original', { headers: { 'Content-Type': 'application/octet-stream' } })); });
+  expect(create).toHaveBeenCalledOnce(); expect(window.location.pathname).toBe('/notifications');
+});
+
+it('does not release a pending original download after deleting that original', async () => {
+  const { state } = server(); state.documents = [stored]; let finish!: (response: Response) => void;
+  state.download = () => new Promise((resolve) => { finish = resolve; }); const create = vi.fn(() => 'blob:synthetic-only');
+  class BrowserURL extends URL { static createObjectURL = create; static revokeObjectURL = vi.fn(); }
+  vi.stubGlobal('URL', BrowserURL);
+  await mount(); await click('Download original'); await click('Delete original'); await click('Delete original and reports');
+  await act(async () => { finish(new Response('synthetic original', { headers: { 'Content-Type': 'application/octet-stream' } })); });
+  expect(create).not.toHaveBeenCalled();
+});
+
+it('resets older inbox pages after deleting a source whose jobs are outside recent history', async () => {
+  const { state } = server(); state.documents = [stored];
+  state.jobs = Array.from({ length: 101 }, (_, index) => ({ ...queued, document: stored, id: `00000000-0000-4000-8000-${String(index).padStart(12, '0')}` }));
+  state.notifications = state.jobs.map((job, index) => ({ ...completedNotice, id: job.id, job_id: job.id, job_title: `Old comparison ${index}` }));
+  state.readJobs = async () => json({ jobs: [] });
+  await mount(); await openInbox(); await click('Load older updates');
+  expect(screen.getByRole('link', { name: 'Old comparison 100Report ready' })).toBeTruthy();
+  await click('Delete original'); await click('Delete original and reports');
+  expect(screen.getByRole('heading', { name: 'No updates yet' })).toBeTruthy();
+  expect(screen.queryByRole('link', { name: /Old comparison/ })).toBeNull();
 });

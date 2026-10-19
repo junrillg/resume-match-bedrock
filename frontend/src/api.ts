@@ -31,6 +31,15 @@ export type Job = {
   error_code: string | null;
   match: Match | null;
   document: DocumentRecord | null;
+  processing_url?: string;
+  result_url?: string | null;
+};
+export type CompletionNotification = {
+  id: string; job_id: string; job_title: string; status: 'succeeded' | 'failed';
+  created_at: string; read_at: string | null; href: string;
+};
+export type NotificationPage = {
+  notifications: CompletionNotification[]; unread_count: number; next_offset: number | null;
 };
 
 export class ApiError extends Error {
