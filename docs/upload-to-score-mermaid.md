@@ -4,6 +4,8 @@ The seven business steps share one durable flow: **1 Submit · 2 Accept · 3 Rel
 
 [Architecture overview](architecture.md) · [Operating contract](implementation-guide.md) · [AWS service journey](aws-service-journey.md)
 
+For the step-by-step API admission lesson, open [_admit_jobs(): four branch-by-branch diagrams](admit-jobs-walkthrough.md). It covers request validation, transaction A, original upload and transaction B.
+
 ## End-to-end execution
 
 ![End-to-end execution.](assets/upload-to-score-overview.svg)
