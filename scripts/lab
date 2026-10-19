@@ -37,7 +37,7 @@ if [ "$action" = up ]; then
     chmod 600 .env
   fi
   needs_upgrade=false
-  for key in OPENOBSERVE_PASSWORD OBJECT_ADMIN_ACCESS_KEY OBJECT_ADMIN_SECRET_KEY OBJECT_API_ACCESS_KEY OBJECT_API_SECRET_KEY OBJECT_WORKER_ACCESS_KEY OBJECT_WORKER_SECRET_KEY OBJECT_RELAY_ACCESS_KEY OBJECT_RELAY_SECRET_KEY FLOWER_PASSWORD FLOWER_BROKER_PASSWORD RABBITMQ_VIEWER_PASSWORD POSTGRES_VIEWER_PASSWORD PGADMIN_PASSWORD STORAGE_VIEWER_PASSWORD STORAGE_ADMIN_PASSWORD; do
+  for key in OPENOBSERVE_PASSWORD OBJECT_ADMIN_ACCESS_KEY OBJECT_ADMIN_SECRET_KEY OBJECT_API_ACCESS_KEY OBJECT_API_SECRET_KEY OBJECT_WORKER_ACCESS_KEY OBJECT_WORKER_SECRET_KEY OBJECT_RELAY_ACCESS_KEY OBJECT_RELAY_SECRET_KEY FLOWER_PASSWORD FLOWER_BROKER_PASSWORD RABBITMQ_VIEWER_PASSWORD POSTGRES_VIEWER_PASSWORD PGADMIN_PASSWORD STORAGE_VIEWER_PASSWORD STORAGE_ADMIN_PASSWORD STREAM_GATEWAY_PASSWORD STREAM_RELAY_PASSWORD STREAM_VIEWER_PASSWORD STREAM_GUI_PASSWORD; do
     if [ ! -e .env ] || ! grep -q "^$key=" .env; then needs_upgrade=true; fi
   done
   if [ "$needs_upgrade" = true ]; then
@@ -63,7 +63,7 @@ if [ "$action" = up ]; then
       value=$(openssl rand -hex 32)
       printf 'OPENOBSERVE_PASSWORD=Aa1!%s\n' "$value" >> "$pending"
     fi
-    for key in OBJECT_ADMIN_ACCESS_KEY OBJECT_ADMIN_SECRET_KEY OBJECT_API_ACCESS_KEY OBJECT_API_SECRET_KEY OBJECT_WORKER_ACCESS_KEY OBJECT_WORKER_SECRET_KEY OBJECT_RELAY_ACCESS_KEY OBJECT_RELAY_SECRET_KEY FLOWER_PASSWORD FLOWER_BROKER_PASSWORD RABBITMQ_VIEWER_PASSWORD POSTGRES_VIEWER_PASSWORD PGADMIN_PASSWORD STORAGE_VIEWER_PASSWORD STORAGE_ADMIN_PASSWORD; do
+    for key in OBJECT_ADMIN_ACCESS_KEY OBJECT_ADMIN_SECRET_KEY OBJECT_API_ACCESS_KEY OBJECT_API_SECRET_KEY OBJECT_WORKER_ACCESS_KEY OBJECT_WORKER_SECRET_KEY OBJECT_RELAY_ACCESS_KEY OBJECT_RELAY_SECRET_KEY FLOWER_PASSWORD FLOWER_BROKER_PASSWORD RABBITMQ_VIEWER_PASSWORD POSTGRES_VIEWER_PASSWORD PGADMIN_PASSWORD STORAGE_VIEWER_PASSWORD STORAGE_ADMIN_PASSWORD STREAM_GATEWAY_PASSWORD STREAM_RELAY_PASSWORD STREAM_VIEWER_PASSWORD STREAM_GUI_PASSWORD; do
       if ! grep -q "^$key=" "$pending"; then
         value=$(openssl rand -hex 32)
         printf '%s=%s\n' "$key" "$value" >> "$pending"
@@ -86,7 +86,7 @@ case "$action" in
     COMPOSE_PARALLEL_LIMIT=1 docker compose build
     docker compose up -d --wait --wait-timeout 900
     docker compose exec -T api python manage.py ensure_lab_user
-    printf 'Lab ready: http://127.0.0.1:8088/\nLogs: http://127.0.0.1:5080/\nBroker: http://127.0.0.1:15672/\nTasks: http://127.0.0.1:5555/tasks\nDatabase: http://127.0.0.1:5050/\nObjects: http://127.0.0.1:23646/files?path=/buckets/resume-originals\nScanner: docker compose exec scanner clamdtop\nRun ./scripts/lab credentials privately for the local logins.\n'
+    printf 'Lab ready: http://127.0.0.1:8088/\nLogs: http://127.0.0.1:5080/\nBroker: http://127.0.0.1:15672/\nTasks: http://127.0.0.1:5555/tasks\nDatabase: http://127.0.0.1:5050/\nObjects: http://127.0.0.1:23646/files?path=/buckets/resume-originals\nFan-out: http://127.0.0.1:8089/\nScanner: docker compose exec scanner clamdtop\nRun ./scripts/lab credentials privately for the local logins.\n'
     ;;
   down) docker compose down ;;
   status) docker compose ps ;;
@@ -101,6 +101,7 @@ case "$action" in
         labels["RABBITMQ_VIEWER_PASSWORD"]="Broker username: lab_monitor\nBroker password: "
         labels["FLOWER_PASSWORD"]="Tasks username: viewer\nTasks password: "
         labels["PGADMIN_PASSWORD"]="Database GUI email: lab@example.invalid\nDatabase GUI password: "
+        labels["STREAM_GUI_PASSWORD"]="Fan-out GUI username: viewer\nFan-out GUI password: "
         labels["STORAGE_VIEWER_PASSWORD"]="Storage username: viewer\nStorage password: "
       }
       $1 in labels { print labels[$1] substr($0, index($0, "=")+1) }

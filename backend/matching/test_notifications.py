@@ -163,7 +163,7 @@ class NotificationTests(StorageBoundaryMixin, TestCase):
 
     def test_fixed_bounded_page_unread_count_and_validation(self):
         jobs = [make_job(self.owner, status=Job.Status.SUCCEEDED) for _ in range(101)]
-        CompletionNotification.objects.bulk_create([CompletionNotification(job=job, status=Job.Status.SUCCEEDED) for job in jobs])
+        CompletionNotification.objects.bulk_create([CompletionNotification(job=job, owner=job.owner, status=Job.Status.SUCCEEDED) for job in jobs])
         first = self.client.get("/api/notifications/").json()
         second = self.client.get("/api/notifications/?offset=100").json()
         self.assertEqual((len(first["notifications"]), first["unread_count"], first["next_offset"]), (100, 101, 100))

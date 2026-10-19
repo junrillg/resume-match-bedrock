@@ -18,6 +18,18 @@ The system preserves an uploaded original, processes comparisons independently o
 
 These are project requirements, not industry capacity targets. Admission permits 20 logical jobs per owner per UTC day. Account isolation is implemented; organization tenancy and federated identity are separate deployment requirements. No automated hiring decision is made.
 
+## Scale inputs
+
+The architecture target is **1,000,000 simultaneously connected users** and a peak
+**100 comparisons/second**. Browser tabs, upload reuse, service time and provider token
+quotas affect the resulting infrastructure budget. Initial execution starts small with
+the same event-driven code path; increasing capacity must not require replacing polling
+or an in-memory durability substitute. [Delivery design and measured local envelope →](decisions/0009-event-driven-completion.md)
+
+The local run verifies 1,000 connected owners and one real queued comparison. It does
+not measure the target processing rate or million-user capacity. Deployment sizes and
+capacity evidence remain distinct from the implemented mechanisms.
+
 ## Flow and consistency
 
 Steps **1 Submit · 2 Accept · 3 Relay · 4 Queue · 5 Process · 6 Save · 7 Read** are shared across the [architecture](architecture.md), [document lifecycle](document-lifecycle.md) and [AWS journey](aws-service-journey.md).
@@ -34,11 +46,12 @@ After commit, the relay publishes only a UUID. The worker fetches verified sourc
 | Originals and integrity | SeaweedFS S3-compatible storage | [Durable lifecycle](decisions/0006-durable-document-lifecycle.md) |
 | Metadata, state and results | PostgreSQL | [Background work](decisions/0001-durable-background-work.md) |
 | Delivery and reconciliation | Relay + RabbitMQ + Celery worker | [Background work](decisions/0001-durable-background-work.md) |
+| Connected browser delivery | PostgreSQL event ledger + event relay + two independent Valkey shards + two raw ASGI gateway processes | [Durable events](decisions/0009-event-driven-completion.md) |
 | Untrusted-file gate | ClamAV locally; GuardDuty in AWS design | [Durable lifecycle](decisions/0006-durable-document-lifecycle.md) |
 | Proposed evidence | Separate HTTP Converse service / Bedrock | [Evidence boundary](decisions/0002-evidence-and-data-boundaries.md) |
 | Correlated diagnostics | OpenObserve + bounded OTLP export | [Observability](decisions/0004-searchable-observability.md) |
 
-Redis has no required caching role; Kafka has no retained-stream consumer here. Business scope stays small while storage/recovery/access mechanisms remain complete for the stated flow.
+Valkey supplies owner-channel wakeups and bounded connection leases, not a cache or the source of business truth. PostgreSQL owns replay and saved outcomes. Kafka has no retained-stream consumer here. Business scope stays small while storage/recovery/access mechanisms remain complete for the stated flow.
 
 ## Service inspection
 
@@ -110,10 +123,12 @@ The [research](research.md) supports these choices. Passing local checks and moc
 
 ## Processing and completion journey
 
-The next transport milestone is governed by [ADR 0009](decisions/0009-event-driven-completion.md):
+The event-delivery milestone is governed by [ADR 0009](decisions/0009-event-driven-completion.md):
 **one million simultaneous users**, dedicated asynchronous SSE delivery, durable event
 recovery and bounded event-driven reads. Its deployment target and measured local
-capacity are separate. The existing polling transport below remains the shipped state
-until that runnable milestone passes; the ADR records the replacement and its checks.
+capacity are separate. The local implementation replaces recurring browser polling
+with SSE signals and targeted authorized reads. Stream heartbeats do not query the
+database; fan-out recovery reconciles the durable revision ledger. Terraform wiring
+and the detailed public topology update remain separate delivery milestones.
 
 [ADR 0008](decisions/0008-nonblocking-completion.md) defines the shipped processing, inbox and result routes. Action pending state is separate from worker progress; saved completion notices survive leaving the page. A paused-worker browser run verified a second submission, an unchanged off-route draft, explicit notification access, result refresh, read persistence and completion while the app tab was closed. The design, durable inbox and UI were verified and published as separate milestones.

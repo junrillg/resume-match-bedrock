@@ -16,7 +16,7 @@ class ViewerAccountBoundaryTests(unittest.TestCase):
         provision_postgres()
         self.assertIn("matching_completionnotification", TABLES)
         grants = [call.args[0].as_string() for call in admin.execute.call_args_list if hasattr(call.args[0], "as_string")]
-        self.assertIn('GRANT SELECT ON "public"."matching_job", "public"."matching_match", "public"."matching_document", "public"."matching_outboxevent", "public"."matching_completionnotification" TO lab_viewer', grants)
+        self.assertIn('GRANT SELECT ON "public"."matching_job", "public"."matching_match", "public"."matching_document", "public"."matching_outboxevent", "public"."matching_completionnotification", "public"."matching_streamstate", "public"."matching_streamevent" TO lab_viewer', grants)
         self.assertEqual(viewer.execute.call_count, len(TABLES))
 
     @patch("init_viewers.rabbit_request")

@@ -18,6 +18,7 @@ from .services import InvalidInput, read_requirements, read_resume
 from .telemetry import emit
 from .documents import read_source, put_original, get_original, tombstone, DocumentError, DocumentUnavailable
 from .notifications import serialize_notification, visible_notifications
+from .events import lock_stream
 import io
 from django.db.models import Q
 
@@ -89,14 +90,27 @@ def login(request):
     user = auth.authenticate(request, username=username, password=password)
     if user is None:
         return error(request, "Invalid username or password.", 401)
-    auth.login(request, user)
+    previous_owner = request.user.pk if request.user.is_authenticated else None
+    previous_session = request.session.session_key
+    with transaction.atomic():
+        lock_stream(previous_owner)
+        auth.login(request, user)
+        if previous_owner and (previous_owner != user.pk or previous_session != request.session.session_key):
+            from .events import record_change
+            record_change(previous_owner, "workspace.changed")
     return JsonResponse(session_payload(request))
 
 
 def logout(request):
     if request.method != "POST":
         return error(request, "Method not allowed.", 405)
-    auth.logout(request)
+    with transaction.atomic():
+        lock_stream(request.user.pk)
+        owner_id = request.user.pk if request.user.is_authenticated else None
+        auth.logout(request)
+        if owner_id:
+            from .events import record_change
+            record_change(owner_id, "workspace.changed")
     return JsonResponse(session_payload(request))
 
 
@@ -135,7 +149,12 @@ def matches(request):
     if not request.user.is_authenticated:
         return error(request, "Sign in to continue.", 401)
     if request.method == "GET":
-        return JsonResponse({"matches": [serialize(record) for record in Match.objects.filter(owner=request.user, created_at__gt=timezone.now() - timedelta(days=settings.DOCUMENT_RETENTION_DAYS)).filter(Q(job__document__isnull=True) | Q(job__document__expires_at__gt=timezone.now())).exclude(job__document__status__in=["deleting", "deleted"])[:100]]})
+        if "legacy" in request.GET and request.GET["legacy"] != "true":
+            return error(request, "legacy must be true when provided.", 400)
+        records = Match.objects.filter(owner=request.user, created_at__gt=timezone.now() - timedelta(days=settings.DOCUMENT_RETENTION_DAYS)).filter(Q(job__document__isnull=True) | Q(job__document__expires_at__gt=timezone.now())).exclude(job__document__status__in=["deleting", "deleted"])
+        if request.GET.get("legacy") == "true":
+            records = records.filter(job__isnull=True)
+        return JsonResponse({"matches": [serialize(record) for record in records[:100]]})
     return error(request, "Method not allowed. Submit new comparisons through /api/jobs/.", 405)
 
 
@@ -149,12 +168,15 @@ def match_detail(request, match_id):
         return error(request, "Not found.", 404)
     if record.job_id:
         with transaction.atomic():
+            lock_stream(request.user.pk)
             job = Job.objects.select_for_update().filter(owner=request.user, pk=record.job_id).first()
             if job is None:
                 return error(request, "Not found.", 404)
             job.delete()
     else:
-        record.delete()
+        with transaction.atomic():
+            lock_stream(request.user.pk)
+            record.delete()
     return JsonResponse({"deleted": str(match_id), "request_id": str(request.request_id)})
 
 
@@ -164,9 +186,9 @@ def serialize_document(document):
             "created_at": document.created_at.isoformat(), "expires_at": document.expires_at.isoformat()}
 
 
-def serialize_job(job):
+def serialize_job(job, summary=False):
     try:
-        match = serialize(job.match)
+        match = {"id": str(job.match.id), "score": float(job.match.score)} if summary else serialize(job.match)
     except Match.DoesNotExist:
         match = None
     document = job.document if job.document_id else None
@@ -190,6 +212,28 @@ def notifications(request):
         return error(request, "Sign in to continue.", 401)
     if request.method != "GET":
         return error(request, "Method not allowed.", 405)
+    if "cursor" in request.GET:
+        from django.core import signing
+        raw = request.GET["cursor"]
+        if len(raw) > 512:
+            return error(request, "Invalid inbox cursor. Reload the inbox.", 400)
+        records = visible_notifications(request.user)
+        if raw:
+            try:
+                before_time, before_id = signing.loads(raw, salt="inbox.cursor", max_age=settings.STREAM_RETENTION_SECONDS)
+                from django.utils.dateparse import parse_datetime
+                before_time = parse_datetime(before_time)
+                before_id = uuid.UUID(before_id)
+                if before_time is None:
+                    raise ValueError()
+            except (signing.BadSignature, ValueError, TypeError):
+                return error(request, "Invalid inbox cursor. Reload the inbox.", 400)
+            records = records.filter(Q(created_at__lt=before_time) | Q(created_at=before_time, id__lt=before_id))
+        page = list(records[:101])
+        next_cursor = signing.dumps([page[99].created_at.isoformat(), str(page[99].id)], salt="inbox.cursor") if len(page) > 100 else None
+        return JsonResponse({"notifications": [serialize_notification(item) for item in page[:100]],
+                             "unread_count": visible_notifications(request.user).filter(read_at__isnull=True).count(),
+                             "next_cursor": next_cursor})
     raw_offset = request.GET.get("offset", "0")
     if len(raw_offset) > 6 or not raw_offset.isascii() or not raw_offset.isdecimal() or int(raw_offset) > 100000:
         return error(request, "Provide an offset from 0 to 100000.", 400)
@@ -207,6 +251,7 @@ def notification_read(request, notification_id):
     if request.method != "POST":
         return error(request, "Method not allowed.", 405)
     with transaction.atomic():
+        lock_stream(request.user.pk)
         notification = visible_notifications(request.user).select_for_update(of=("self",)).filter(pk=notification_id).first()
         if notification is None:
             return error(request, "Not found.", 404)
@@ -230,8 +275,13 @@ def admit_jobs(request):
     if not request.user.is_authenticated:
         return error(request, "Sign in to continue.", 401)
     if request.method == "GET":
-        records = Job.objects.filter(owner=request.user).filter(Q(document__isnull=True) | Q(document__expires_at__gt=timezone.now())).exclude(document__status__in=["deleting", "deleted"]).select_related("match", "document")[:100]
-        return JsonResponse({"jobs": [serialize_job(job) for job in records]})
+        if "summary" in request.GET and request.GET["summary"] != "true":
+            return error(request, "summary must be true when provided.", 400)
+        summary = request.GET.get("summary") == "true"
+        records = Job.objects.filter(owner=request.user).filter(Q(document__isnull=True) | Q(document__expires_at__gt=timezone.now())).exclude(document__status__in=["deleting", "deleted"]).select_related("match", "document").defer("resume_text", "requirements", "document__extracted_text")
+        if summary:
+            records = records.defer("match__requirements")
+        return JsonResponse({"jobs": [serialize_job(job, summary=summary) for job in records[:100]]})
     if request.method != "POST":
         return error(request, "Method not allowed.", 405)
     try:
@@ -248,7 +298,7 @@ def admit_jobs(request):
     fingerprint = hashlib.sha256(json.dumps({"job_title": title, "requirements": requirements, "source": identity}, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     lease = None
     with transaction.atomic():
-        get_user_model().objects.select_for_update().get(pk=request.user.pk)
+        lock_stream(request.user.pk)
         document = None
         if document_id:
             document = Document.objects.select_for_update().filter(pk=document_id, owner=request.user, status__in=[Document.Status.PENDING, Document.Status.READY], expires_at__gt=now).first()
@@ -299,6 +349,7 @@ def admit_jobs(request):
             Document.objects.filter(pk=document.pk, upload_lease=lease).update(upload_lease_until=timezone.now())
             return error(request, "Document storage is unavailable. Retry unchanged inputs.", 503)
         with transaction.atomic():
+            lock_stream(request.user.pk)
             current = Document.objects.select_for_update().get(pk=document.pk)
             job = Job.objects.select_for_update().filter(pk=job.pk).first()
             if current.status in {Document.Status.DELETING, Document.Status.DELETED, Document.Status.REJECTED} or (job is None and current.status == Document.Status.UPLOADING):
@@ -335,16 +386,20 @@ def documents(request):
         return error(request, "Sign in to continue.", 401)
     if request.method != "GET":
         return error(request, "Method not allowed.", 405)
-    records = Document.objects.filter(owner=request.user, expires_at__gt=timezone.now()).exclude(status=Document.Status.DELETED)[:100]
+    records = Document.objects.filter(owner=request.user, expires_at__gt=timezone.now()).exclude(status=Document.Status.DELETED).defer("extracted_text")[:100]
     return JsonResponse({"documents": [serialize_document(document) for document in records]})
 
 
 def document_detail(request, document_id):
     if not request.user.is_authenticated:
         return error(request, "Sign in to continue.", 401)
+    if request.method == "GET":
+        document = Document.objects.filter(owner=request.user, pk=document_id, expires_at__gt=timezone.now()).exclude(status__in=[Document.Status.DELETING, Document.Status.DELETED]).defer("extracted_text").first()
+        return JsonResponse(serialize_document(document)) if document else error(request, "Not found.", 404)
     if request.method != "DELETE":
         return error(request, "Method not allowed.", 405)
     with transaction.atomic():
+        lock_stream(request.user.pk)
         document = Document.objects.select_for_update().filter(owner=request.user, pk=document_id).exclude(status=Document.Status.DELETED).first()
         if document is None:
             return error(request, "Not found.", 404)
@@ -380,12 +435,13 @@ def job_detail(request, job_id):
     if not request.user.is_authenticated:
         return error(request, "Sign in to continue.", 401)
     if request.method == "GET":
-        job = Job.objects.filter(owner=request.user, pk=job_id).filter(Q(document__isnull=True) | Q(document__expires_at__gt=timezone.now())).exclude(document__status__in=["deleting", "deleted"]).select_related("match", "document").first()
+        job = Job.objects.filter(owner=request.user, pk=job_id).filter(Q(document__isnull=True) | Q(document__expires_at__gt=timezone.now())).exclude(document__status__in=["deleting", "deleted"]).select_related("match", "document").defer("resume_text", "requirements", "document__extracted_text").first()
         if job is None:
             return error(request, "Not found.", 404)
         return JsonResponse(serialize_job(job))
     if request.method == "DELETE":
         with transaction.atomic():
+            lock_stream(request.user.pk)
             job = Job.objects.select_for_update().filter(owner=request.user, pk=job_id).first()
             if job is None:
                 return error(request, "Not found.", 404)

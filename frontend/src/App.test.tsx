@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import App, { MatchResult } from './App';
+import { TestEventSource } from './testEventSource';
 import type { CompletionNotification, DocumentRecord, Job, Match, Session } from './api';
 
 const report: Match = {
@@ -23,7 +24,7 @@ function server(session = signedIn, jobs: Job[] = []) {
     deleteDocument: async (id: string): Promise<Response> => { const related = state.jobs.filter((job) => job.document?.id === id).map((job) => job.id); state.deletedDocuments.add(id); state.documents = state.documents.filter((item) => item.id !== id); state.jobs = state.jobs.filter((job) => !related.includes(job.id)); state.matches = []; state.notifications = state.notifications.filter((notice) => !related.includes(notice.job_id)); return json({ deleted: true, status: 'deleting' }, 202); },
     deleteJob: async (id: string): Promise<Response> => { state.jobs = state.jobs.filter((job) => job.id !== id); state.matches = []; state.notifications = state.notifications.filter((notice) => notice.job_id !== id); return json({ deleted: true }); },
     readDetail: async (id: string): Promise<Response> => { const job = state.jobs.find((item) => item.id === id); return job ? json(job) : json({ error: 'Not found.' }, 404); },
-    readNotifications: async (offset: number): Promise<Response> => json({ notifications: state.notifications.slice(offset, offset + 100), unread_count: state.notifications.filter((item) => !item.read_at).length, next_offset: state.notifications.length > offset + 100 ? offset + 100 : null }),
+    readNotifications: async (offset: number): Promise<Response> => json({ notifications: state.notifications.slice(offset, offset + 100), unread_count: state.notifications.filter((item) => !item.read_at).length, next_cursor: state.notifications.length > offset + 100 ? String(offset + 100) : null }),
     post: async (_options: RequestInit) => json(queued, 202),
     readJobs: async (): Promise<Response> => json({ jobs: state.jobs }),
     readDocuments: async (): Promise<Response> => json({ documents: state.documents }),
@@ -34,14 +35,20 @@ function server(session = signedIn, jobs: Job[] = []) {
     if (url === '/api/login/') { state.session = signedIn; return json(signedIn); }
     if (url === '/api/logout/') { state.session = anonymous; return json(anonymous); }
     if (url === '/api/jobs/' && options.method === 'POST') { const response = await state.post(options); if (response.ok) { const job = await response.clone().json() as Job; if (!job.document || !state.deletedDocuments.has(job.document.id)) state.jobs = [job, ...state.jobs.filter((item) => item.id !== job.id)]; } return response; }
-    if (url.startsWith('/api/notifications/?')) return state.readNotifications(Number(url.split('offset=')[1]));
+    if (url.startsWith('/api/notifications/?')) return state.readNotifications(Number(new URLSearchParams(url.split('?')[1]).get('cursor') ?? 0));
     if (url.startsWith('/api/notifications/') && options.method === 'POST') { const id = url.split('/')[3]; const notice = state.notifications.find((item) => item.id === id); if (!notice) return json({ error: 'Not found.' }, 404); notice.read_at = '2026-10-19T00:00:00Z'; return json(notice); }
     if (/^\/api\/jobs\/[^/]+\/$/.test(url) && !options.method) return state.readDetail(url.split('/')[3]);
-    if (url === '/api/jobs/') return state.readJobs();
+    if (url === '/api/jobs/?summary=true') {
+      const response = await state.readJobs();
+      if (!response.ok) return response;
+      const body = await response.json() as { jobs: Job[] };
+      return json({ jobs: body.jobs.map((job) => ({ ...job, match: job.match ? { id: job.match.id, score: job.match.score } : null })) });
+    }
     if (url === '/api/documents/') return state.readDocuments();
+    if (/^\/api\/documents\/[^/]+\/$/.test(url) && !options.method) { const found = state.documents.find((item) => item.id === url.split('/')[3]); return found ? json(found) : json({}, 404); }
     if (url.endsWith('/download/')) return state.download();
     if (url.startsWith('/api/documents/') && options.method === 'DELETE') return state.deleteDocument(url.split('/')[3]);
-    if (url === '/api/matches/') return json({ matches: state.matches });
+    if (url === '/api/matches/?legacy=true') return json({ matches: state.matches.filter((match) => !state.jobs.some((job) => job.match?.id === match.id)) });
     if (url.startsWith('/api/jobs/') && options.method === 'DELETE') return state.deleteJob(url.split('/')[3]);
     if (options.method === 'DELETE') { state.jobs = []; state.matches = []; return json({ deleted: true }); }
     throw new Error(`Unexpected request: ${url}`);
@@ -52,12 +59,16 @@ function server(session = signedIn, jobs: Job[] = []) {
 async function mount() { await act(async () => { render(<App />); }); }
 async function click(name: string | RegExp) { await act(async () => { fireEvent.click(screen.queryByRole('button', { name }) ?? screen.getByRole('link', { name })); }); }
 async function tick(milliseconds = 1000) { await act(async () => { await vi.advanceTimersByTimeAsync(milliseconds); }); }
+async function changed(kind = 'workspace.changed', ids: { job_id?: string; document_id?: string } = {}) {
+  await act(async () => { TestEventSource.change(kind, ids); await vi.advanceTimersByTimeAsync(101); });
+}
 async function login() {
   fireEvent.change(screen.getByLabelText('Username'), { target: { value: 'reviewer' } });
   fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'synthetic-only' } });
   await click('Sign in');
 }
 beforeEach(() => {
+  TestEventSource.reset(); vi.stubGlobal('EventSource', TestEventSource);
   window.history.replaceState(null, '', '/');
   vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible'); vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(true);
   vi.useFakeTimers(); vi.stubGlobal('requestAnimationFrame', () => 0);
@@ -72,7 +83,7 @@ it('shows server-owned coverage, excerpts, and honest document gaps', () => {
   expect(screen.getByText('Demo · local deterministic')).toBeTruthy();
 });
 
-it('uses rotated CSRF, polls queued/running to success, stops, and confirms deletion', async () => {
+it('uses rotated CSRF, follows queued/running SSE changes, and confirms deletion', async () => {
   const { state, fetcher } = server(anonymous);
   state.post = async () => { state.jobs = [queued]; return json(queued, 202); };
   await mount(); await login(); await click(/Use synthetic sample/); await click(/Analyze evidence/);
@@ -82,9 +93,9 @@ it('uses rotated CSRF, polls queued/running to success, stops, and confirms dele
   expect(new Headers(post.headers).get('Idempotency-Key')).toMatch(/^[a-f0-9-]{36}$/);
   expect((post.body as FormData).get('resume_text')).toContain('SYNTHETIC SAMPLE');
   expect((post.body as FormData).has('resume')).toBe(false);
-  state.jobs = [{ ...queued, status: 'running', attempts: 1 }]; await tick();
+  state.jobs = [{ ...queued, status: 'running', attempts: 1 }]; await changed('job.changed', { job_id: queued.id });
   expect(screen.getByText(/A worker is extracting/)).toBeTruthy();
-  state.jobs = [{ ...queued, status: 'succeeded', attempts: 1, match: report }]; await tick();
+  state.jobs = [{ ...queued, status: 'succeeded', attempts: 1, match: report }]; await changed('job.changed', { job_id: queued.id });
   expect(screen.getByRole('meter')).toBeTruthy(); expect(screen.getByText('11111111-1111-4111-8111-111111111111')).toBeTruthy();
   const count = fetcher.mock.calls.length; await tick(5000); expect(fetcher.mock.calls).toHaveLength(count);
   await click('Delete this report'); expect(fetcher.mock.calls).toHaveLength(count);
@@ -112,11 +123,12 @@ it('reuses the key after ambiguous transport failure and rotates for changed inp
 it('restores pending work and backs off/resumes monitoring without falsely failing the job', async () => {
   const { state, fetcher } = server(signedIn, [queued]);
   await mount(); await click(/Full stack engineer.*queued/); expect(screen.getByText('11111111-1111-4111-8111-111111111111')).toBeTruthy();
-  state.readJobs = async () => { throw new TypeError('offline'); }; await tick();
+  state.readJobs = async () => { throw new TypeError('offline'); }; await changed();
   expect(screen.getByText('Status updates paused.')).toBeTruthy();
   expect(screen.getByText(/Your job has not been marked failed/)).toBeTruthy();
-  const count = fetcher.mock.calls.length; await tick(5000); expect(fetcher.mock.calls.length).toBeGreaterThan(count);
-  state.readJobs = async () => json({ jobs: [{ ...queued, status: 'succeeded', match: report }] });
+  const count = fetcher.mock.calls.length; await tick(5000); expect(fetcher.mock.calls).toHaveLength(count);
+  state.jobs = [{ ...queued, status: 'succeeded', match: report }];
+  state.readJobs = async () => json({ jobs: state.jobs });
   await click('Resume status updates'); await tick(); expect(screen.getByRole('meter')).toBeTruthy();
 });
 
@@ -149,19 +161,19 @@ it('aborts a hung status request after ten seconds and pauses updates', async ()
   const { state, fetcher } = server(signedIn, [queued]);
   await mount(); await click(/Full stack engineer.*queued/);
   state.readJobs = () => new Promise((_resolve, reject) => {
-    const signal = fetcher.mock.calls.filter(([url]) => url === '/api/jobs/').at(-1)![1].signal!;
+    const signal = fetcher.mock.calls.filter(([url]) => url === '/api/jobs/?summary=true').at(-1)![1].signal!;
     signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
   });
-  await tick(); await tick(10000);
+  await changed(); await tick(10000);
   expect(screen.getByText('Status updates paused.')).toBeTruthy();
   expect(screen.getByText(/Accepted and waiting for a worker/)).toBeTruthy();
 });
 
-it('does not restore a deleted pending job from an older in-flight poll', async () => {
+it('does not restore a deleted pending job from an older in-flight reconciliation', async () => {
   const other = { ...queued, id: '22222222-2222-4222-8222-222222222222', job_title: 'Another pending role' };
   const { state } = server(signedIn, [queued, other]);
   await mount(); await click(/Full stack engineer.*queued/); let complete!: (response: Response) => void;
-  state.readJobs = () => new Promise((resolve) => { complete = resolve; }); await tick();
+  state.readJobs = () => new Promise((resolve) => { complete = resolve; }); await changed();
   await click('Delete this comparison'); await click('Delete comparison');
   await act(async () => { complete(json({ jobs: [queued, other] })); });
   expect(screen.queryByText('11111111-1111-4111-8111-111111111111')).toBeNull();
@@ -174,7 +186,7 @@ it('clears private drafts/keys on auth loss and ignores an old submission respon
   let finishPost!: (response: Response) => void;
   state.post = () => new Promise((resolve) => { finishPost = resolve; });
   await mount(); await click(/Use synthetic sample/); await click(/Analyze evidence/);
-  state.session = anonymous; state.readJobs = async () => json({ error: 'Sign in again.' }, 401); await tick();
+  state.session = anonymous; state.readJobs = async () => json({ error: 'Sign in again.' }, 401); await changed();
   expect(screen.getByRole('heading', { name: 'Sign in to review a résumé' })).toBeTruthy();
   await act(async () => { finishPost(json({ ...queued, id: 'private-old-job' }, 202)); });
   state.jobs = []; state.readJobs = async () => json({ jobs: [] }); await login();
@@ -193,11 +205,11 @@ it('keeps legacy reports accessible and deletes them through the report endpoint
   expect(fetcher.mock.calls.some(([url, options]) => url === '/api/matches/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/' && options.method === 'DELETE')).toBe(true);
 });
 
-it('cancels polling on unmount and ignores a response that finishes afterward', async () => {
+it('closes the stream and cancels reads on unmount and ignores a response that finishes afterward', async () => {
   const { state, fetcher } = server(signedIn, [queued]);
   await mount(); let finish!: (response: Response) => void;
-  state.readJobs = () => new Promise((resolve) => { finish = resolve; }); await tick();
-  const pending = fetcher.mock.calls.filter(([url]) => url === '/api/jobs/').at(-1)![1]; cleanup(); expect(pending.signal?.aborted).toBe(true);
+  state.readJobs = () => new Promise((resolve) => { finish = resolve; }); await changed();
+  const pending = fetcher.mock.calls.filter(([url]) => url === '/api/jobs/?summary=true').at(-1)![1]; cleanup(); expect(pending.signal?.aborted).toBe(true);
   await act(async () => { finish(json({ jobs: [queued] })); });
   const count = fetcher.mock.calls.length; await tick(5000); expect(fetcher.mock.calls).toHaveLength(count);
 });
@@ -298,12 +310,12 @@ it('makes pending originals reusable, hides their downloads and shows configured
   expect(screen.getByText(/Expires Jan 16, 2027/)).toBeTruthy();
 });
 
-it('confirms source deletion separately and rejects a stale poll restoring its reports or original', async () => {
+it('confirms source deletion separately and rejects stale reconciliation restoring its reports or original', async () => {
   const linked = { ...queued, document: stored };
   const { state, fetcher } = server(signedIn, [linked]); state.documents = [stored]; state.matches = [report];
   await mount();
   let complete!: (response: Response) => void;
-  state.readJobs = () => new Promise((resolve) => { complete = resolve; }); await tick();
+  state.readJobs = () => new Promise((resolve) => { complete = resolve; }); await changed();
   state.readJobs = async () => json({ jobs: state.jobs });
   const before = fetcher.mock.calls.filter(([, options]) => options.method === 'DELETE').length;
   await click('Delete original');
@@ -348,7 +360,7 @@ it('restores uploading receipts as active work and explains source replay instea
   await mount(); await click(/Full stack engineer.*uploading/);
   expect(screen.getByText(/The original upload is incomplete/)).toBeTruthy();
   state.jobs = [{ ...queued, status: 'succeeded', document: stored, match: report }]; state.documents = [stored];
-  await tick();
+  await changed('job.changed', { job_id: queued.id });
   expect(screen.getByRole('button', { name: 'Download original' })).toBeTruthy();
   expect(screen.getByRole('meter')).toBeTruthy();
 });
@@ -379,7 +391,7 @@ it('leaves accepted work to complete off-route without interrupting another draf
   await click('New comparison');
   fireEvent.change(screen.getByLabelText('Role title'), { target: { value: 'Draft for another role' } });
   state.jobs = [{ ...queued, status: 'succeeded', match: report }]; state.notifications = [completedNotice];
-  await tick();
+  await changed('job.changed', { job_id: queued.id }); await changed('inbox.changed');
   expect(window.location.pathname).toBe('/');
   expect((screen.getByLabelText('Role title') as HTMLInputElement).value).toBe('Draft for another role');
   expect(screen.queryByRole('meter')).toBeNull();
@@ -392,7 +404,7 @@ it('leaves accepted work to complete off-route without interrupting another draf
 it('advances only the currently viewed processing job and supports real Back navigation', async () => {
   const { state } = server(signedIn, [queued]);
   await mount(); await click(/Full stack engineer.*queued/);
-  state.jobs = [{ ...queued, status: 'succeeded', match: report }]; await tick();
+  state.jobs = [{ ...queued, status: 'succeeded', match: report }]; await changed('job.changed', { job_id: queued.id });
   expect(window.location.pathname).toBe(`/results/${queued.id}`);
   await click('New comparison');
   await act(async () => { window.history.back(); await vi.advanceTimersByTimeAsync(1); });
@@ -468,13 +480,13 @@ it('reconciles a completion when returning online even with no previously known 
 
 it('does not overlap monitoring requests while a previous refresh is still pending', async () => {
   const { state, fetcher } = server(signedIn, [queued]); let finish!: (response: Response) => void;
-  await mount(); state.readJobs = () => new Promise((resolve) => { finish = resolve; }); await tick();
-  const count = fetcher.mock.calls.filter(([url]) => url === '/api/jobs/').length;
+  await mount(); state.readJobs = () => new Promise((resolve) => { finish = resolve; }); await changed();
+  const count = fetcher.mock.calls.filter(([url]) => url === '/api/jobs/?summary=true').length;
   await act(async () => { window.dispatchEvent(new Event('focus')); window.dispatchEvent(new Event('online')); });
-  await tick(3000); expect(fetcher.mock.calls.filter(([url]) => url === '/api/jobs/')).toHaveLength(count);
+  await tick(3000); expect(fetcher.mock.calls.filter(([url]) => url === '/api/jobs/?summary=true')).toHaveLength(count);
   state.readJobs = async () => json({ jobs: state.jobs });
-  await act(async () => { finish(json({ jobs: state.jobs })); }); await tick(1);
-  expect(fetcher.mock.calls.filter(([url]) => url === '/api/jobs/')).toHaveLength(count + 1);
+  await act(async () => { finish(json({ jobs: state.jobs })); }); await tick(101);
+  expect(fetcher.mock.calls.filter(([url]) => url === '/api/jobs/?summary=true')).toHaveLength(count + 1);
 });
 
 it('persists read acknowledgement with CSRF and restores it after remount', async () => {
@@ -564,4 +576,115 @@ it('resets older inbox pages after deleting a source whose jobs are outside rece
   await click('Delete original'); await click('Delete original and reports');
   expect(screen.getByRole('heading', { name: 'No updates yet' })).toBeTruthy();
   expect(screen.queryByRole('link', { name: /Old comparison/ })).toBeNull();
+});
+
+it('performs no idle HTTP refresh and reads only resources named by live events', async () => {
+  const { state, fetcher } = server(signedIn, [queued]); await mount();
+  fetcher.mockClear(); await tick(300000); expect(fetcher).not.toHaveBeenCalled();
+  state.jobs = [{ ...queued, status: 'running' }];
+  await act(async () => {
+    for (let n = 0; n < 30; n++) TestEventSource.change('job.changed', { job_id: queued.id });
+    await vi.advanceTimersByTimeAsync(101);
+  });
+  expect(fetcher.mock.calls.map(([url]) => url)).toEqual([`/api/jobs/${queued.id}/`]);
+  fetcher.mockClear(); state.notifications = [completedNotice]; await changed('inbox.changed');
+  expect(fetcher.mock.calls.map(([url]) => url)).toEqual(['/api/notifications/?cursor=']);
+  expect(screen.getByText('1 comparison has an update.')).toBeTruthy();
+});
+
+it('buffers completion behind an initial snapshot so its older response cannot hide the result', async () => {
+  const { state } = server(signedIn, [queued]); let finish!: (response: Response) => void;
+  state.readJobs = () => new Promise((resolve) => { finish = resolve; });
+  await mount();
+  state.jobs = [{ ...queued, status: 'succeeded', match: report }];
+  await changed('job.changed', { job_id: queued.id });
+  await act(async () => { finish(json({ jobs: [queued] })); }); await tick(101);
+  await click(/Full stack engineer.*60%/);
+  expect(screen.getByRole('meter')).toBeTruthy();
+});
+
+it('limits targeted detail reads to four concurrently during a completion burst', async () => {
+  const { state, fetcher } = server(); await mount(); let inFlight = 0; let maximum = 0;
+  state.jobs = Array.from({ length: 12 }, (_, index) => ({ ...queued, id: `00000000-0000-4000-8000-${String(index).padStart(12, '0')}` }));
+  state.readDetail = async (id) => {
+    inFlight += 1; maximum = Math.max(maximum, inFlight);
+    await new Promise((resolve) => setTimeout(resolve, 20)); inFlight -= 1;
+    return json(state.jobs.find((job) => job.id === id));
+  };
+  fetcher.mockClear();
+  await act(async () => {
+    state.jobs.forEach((job) => TestEventSource.change('job.changed', { job_id: job.id }));
+    await vi.advanceTimersByTimeAsync(200);
+  });
+  expect(maximum).toBe(4);
+  expect(fetcher.mock.calls).toHaveLength(12);
+  expect(fetcher.mock.calls.every(([url]) => /^\/api\/jobs\/[^/]+\/$/.test(url))).toBe(true);
+});
+
+it('clears private state and starts a fresh cursor when the session owner changes', async () => {
+  const { state } = server(signedIn, [queued]); await mount();
+  fireEvent.change(screen.getByLabelText('Résumé text'), { target: { value: 'Private draft for the first owner' } });
+  await changed('job.changed', { job_id: queued.id }); const original = TestEventSource.active()!;
+  state.session = { ...signedIn, username: 'second-owner' }; state.jobs = []; state.documents = []; state.notifications = [];
+  await act(async () => { window.dispatchEvent(new Event('focus')); });
+  expect((screen.getByLabelText('Résumé text') as HTMLTextAreaElement).value).toBe('');
+  expect(original.closed).toBe(true);
+  expect(TestEventSource.active()!.url).toBe('/api/events/');
+  original.emit('change', { revision: 999, kind: 'inbox.changed' }); await tick(101);
+  expect(screen.queryByText('Private draft for the first owner')).toBeNull();
+});
+
+it('keeps working through a stream outage without HTTP polling and permits explicit saved-state refresh', async () => {
+  const { state, fetcher } = server(signedIn, [queued]); await mount();
+  fireEvent.change(screen.getByLabelText('Role title'), { target: { value: 'Uninterrupted draft' } });
+  TestEventSource.autoReady = false;
+  await act(async () => { TestEventSource.active()!.dispatchEvent(new Event('error')); });
+  state.jobs = [{ ...queued, status: 'succeeded', match: report }]; state.notifications = [completedNotice];
+  fetcher.mockClear(); await tick(300000);
+  expect(fetcher).not.toHaveBeenCalled();
+  expect((screen.getByRole('button', { name: 'Analyze evidence' }) as HTMLButtonElement).disabled).toBe(false);
+  await click('Resume status updates');
+  expect(screen.getByText('1 comparison has an update.')).toBeTruthy();
+  expect((screen.getByLabelText('Role title') as HTMLInputElement).value).toBe('Uninterrupted draft');
+  expect(window.location.pathname).toBe('/');
+});
+
+
+it('does not regress an SSE terminal outcome when its acceptance receipt arrives late off-route', async () => {
+  const { state } = server(); let receipt!: (response: Response) => void;
+  state.post = () => new Promise((resolve) => { receipt = resolve; });
+  await mount(); await click(/Use synthetic sample/); await click('Analyze evidence'); await openInbox();
+  state.jobs = [{ ...queued, status: 'succeeded', match: report }];
+  await changed('job.changed', { job_id: queued.id });
+  await act(async () => { receipt(json(queued, 202)); });
+  expect(window.location.pathname).toBe('/notifications');
+  expect(screen.getByRole('link', { name: /Full stack engineer.*60%/ }).getAttribute('href')).toBe(`/results/${queued.id}`);
+  expect(screen.queryByRole('link', { name: /Full stack engineer.*queued/ })).toBeNull();
+});
+
+
+it('reconciles metadata history and legacy-only reports without fetching modern evidence lists', async () => {
+  const { state, fetcher } = server(signedIn, [{ ...queued, status: 'succeeded', match: report }]);
+  state.matches = [report, { ...report, id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', job_title: 'Earlier independent report' }];
+  await mount();
+  expect(fetcher.mock.calls.some(([url]) => url === '/api/jobs/?summary=true')).toBe(true);
+  expect(fetcher.mock.calls.some(([url]) => url === '/api/matches/?legacy=true')).toBe(true);
+  expect(fetcher.mock.calls.some(([url, options]) => (url === '/api/jobs/' || url === '/api/matches/') && !options.method)).toBe(false);
+  expect(screen.getByRole('link', { name: /Full stack engineer.*60%/ })).toBeTruthy();
+  expect(screen.getByRole('link', { name: /Earlier independent report.*60%/ })).toBeTruthy();
+  expect(screen.queryByText('Built Python services.')).toBeNull();
+});
+
+it('waits for authorized full detail before rendering a report from summary history', async () => {
+  const { state, fetcher } = server(signedIn, [{ ...queued, status: 'succeeded', match: report }]);
+  await mount(); let finish!: (response: Response) => void;
+  state.readDetail = () => new Promise((resolve) => { finish = resolve; });
+  await click(/Full stack engineer.*60%/);
+  expect(screen.getByText('Loading report evidence…')).toBeTruthy();
+  expect(screen.queryByRole('meter')).toBeNull();
+  expect(screen.queryByText('0 of 0 skills evidenced')).toBeNull();
+  await act(async () => { finish(json({ ...queued, status: 'succeeded', match: report })); });
+  expect(screen.getByText('Built Python services.')).toBeTruthy();
+  expect(screen.getByRole('meter').getAttribute('aria-valuenow')).toBe('60');
+  expect(fetcher.mock.calls.some(([url]) => url === `/api/jobs/${queued.id}/`)).toBe(true);
 });

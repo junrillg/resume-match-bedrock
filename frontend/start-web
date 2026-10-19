@@ -18,7 +18,14 @@ case "${FRONTEND_TRUST_ALB_PROTO:-false}" in
         ;;
     *) echo 'FRONTEND_TRUST_ALB_PROTO must be true or false' >&2; exit 1 ;;
 esac
-export FRONTEND_API_UPSTREAM FRONTEND_DNS_RESOLVER FRONTEND_PROTO_RULE
-envsubst '${FRONTEND_API_UPSTREAM} ${FRONTEND_DNS_RESOLVER} ${FRONTEND_PROTO_RULE}' \
+FRONTEND_EVENTS_UPSTREAM_A=${FRONTEND_EVENTS_UPSTREAM_A:-events-a:8001}
+FRONTEND_EVENTS_UPSTREAM_B=${FRONTEND_EVENTS_UPSTREAM_B:-'server events-b:8001 resolve;'}
+case "$FRONTEND_EVENTS_UPSTREAM_A:$FRONTEND_EVENTS_UPSTREAM_B" in
+    'events-a:8001:server events-b:8001 resolve;') ;;
+    '127.0.0.1:8001:disabled') FRONTEND_EVENTS_UPSTREAM_B='' ;;
+    *) echo 'Unsupported event gateway upstream configuration' >&2; exit 1 ;;
+esac
+export FRONTEND_API_UPSTREAM FRONTEND_DNS_RESOLVER FRONTEND_PROTO_RULE FRONTEND_EVENTS_UPSTREAM_A FRONTEND_EVENTS_UPSTREAM_B
+envsubst '${FRONTEND_API_UPSTREAM} ${FRONTEND_DNS_RESOLVER} ${FRONTEND_PROTO_RULE} ${FRONTEND_EVENTS_UPSTREAM_A} ${FRONTEND_EVENTS_UPSTREAM_B}' \
     < /etc/nginx/nginx.conf.template > /tmp/nginx.conf
 exec nginx -c /tmp/nginx.conf "$@"

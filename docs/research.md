@@ -136,3 +136,22 @@ Populated-screen checks exposed two release-specific integration details:
 | [MDN History API](https://developer.mozilla.org/en-US/docs/Web/API/History_API/Working_with_the_History_API) | pushState/replaceState and popstate support same-document navigation | Processing/results URLs survive refresh and Back |
 
 [ADR 0008](decisions/0008-nonblocking-completion.md) records alternatives, delivery scope and the implementation plan. Polling is a transport choice; keeping users locked on a page is a separate UX decision.
+
+## Million-connection delivery · 2026-10-19
+
+[ADR 0009](decisions/0009-event-driven-completion.md) supersedes the polling choice.
+The target is one million simultaneously connected users, not one million accounts.
+
+| Primary source | Supported behavior | Decision |
+| --- | --- | --- |
+| [Django ASGI handler](https://github.com/django/django/blob/stable/5.2.x/django/core/handlers/asgi.py), [asgiref context](https://github.com/django/asgiref/blob/main/asgiref/sync.py) | A thread-sensitive request context can live as long as a streamed response | Dedicated ASGI gateway with bounded shared database work; verify threads under real connections |
+| [Django PostgreSQL pooling](https://docs.djangoproject.com/en/5.2/ref/databases/#connection-pool) | Supported psycopg pools bound database connections independently of browser sockets | Gateway-specific bounded pool and timeouts; database proxy in the deployment path |
+| [Redis Pub/Sub](https://redis.io/docs/latest/develop/use-cases/pub-sub/) | Live fan-out is at most once; independent or sharded distribution avoids unnecessary global broadcast | Durable PostgreSQL replay plus partitioned wake transport, subscribe before replay |
+| [Centrifugo experiment](https://centrifugal.dev/blog/2020/02/10/million-connections-with-centrifugo) | A published million-WebSocket experiment used replicated gateways, independent Redis shards and distributed generators | Adopt those separation/measurement principles; do not reuse its performance numbers as ours |
+| [MDN SSE](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events/Using_server-sent_events) | Event IDs, reconnects and comment heartbeats support long-lived delivery | Minimal change events, durable catch-up, jittered reconnect and bounded slow-consumer handling |
+| [AWS ALB quotas](https://docs.aws.amazon.com/elasticloadbalancing/latest/application/load-balancer-limits.html), [ECS quotas](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/service-quotas.html) | Account/region resource quotas constrain actual deployment | Include target/replica/failover arithmetic and quota prerequisites; no inferred cloud capacity |
+| [Valkey license](https://github.com/valkey-io/valkey/blob/8.1/COPYING), [Redis Commander license](https://github.com/joeferner/redis-commander/blob/master/LICENSE) | BSD and MIT licensing respectively | Runnable local fan-out and a separately authenticated read-only viewer |
+
+These sources support architectural choices. The implementation's scoped load,
+failure and isolation results remain separate evidence. A fleet outage must not
+turn one million streams into repeated full-workspace HTTP polling.

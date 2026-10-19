@@ -16,6 +16,7 @@ from .services import ProviderError, TransientProviderError, calculate_score, ex
 from .telemetry import emit
 from .documents import document_text, reconcile_documents, DocumentUnavailable, ScanPending
 from .notifications import persist_completion
+from .events import lock_stream
 
 
 def job_event(event, job, stage, **extra):
@@ -47,6 +48,7 @@ def enqueue_again(job, now):
 
 def claim_job(job_id):
     with transaction.atomic():
+        lock_stream(Job.objects.filter(pk=job_id).values_list("owner_id", flat=True).first())
         job = Job.objects.select_for_update().filter(pk=job_id).first()
         now = timezone.now()
         if job is None or job.status != Job.Status.QUEUED or job.available_at > now:
@@ -67,6 +69,7 @@ def claim_job(job_id):
 
 def finish_job(claim, evidence=None, error_code=None, transient=False, duration_ms=0):
     with transaction.atomic():
+        lock_stream(claim.owner_id)
         document = Document.objects.select_for_update().filter(pk=claim.document_id).first() if claim.document_id else None
         if claim.document_id and (document is None or document.status in {Document.Status.DELETING, Document.Status.DELETED} or document.expires_at <= timezone.now()):
             return False
@@ -115,6 +118,7 @@ def run_job(job_id):
             emit("provider.responded", request_id=claim.request_id, job_id=claim.id, stage="worker", status="running", attempt=claim.attempts, duration_ms=int((time.monotonic() - started) * 1000))
     except ScanPending:
         with transaction.atomic():
+            lock_stream(claim.owner_id)
             job = Job.objects.select_for_update().filter(pk=claim.pk, status=Job.Status.RUNNING, lease_id=claim.lease_id).first()
             if job is not None:
                 job.attempts = max(0, job.attempts - 1)
@@ -141,6 +145,7 @@ def recover_jobs(limit=100):
     ).order_by("wake_at").values_list("id", flat=True)[:limit]
     for job_id in list(candidates):
         with transaction.atomic():
+            lock_stream(Job.objects.filter(pk=job_id).values_list("owner_id", flat=True).first())
             job = Job.objects.select_for_update(skip_locked=True).filter(pk=job_id).first()
             if job is None or job.status not in {Job.Status.QUEUED, Job.Status.RUNNING}:
                 continue

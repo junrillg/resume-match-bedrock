@@ -34,12 +34,14 @@ export type Job = {
   processing_url?: string;
   result_url?: string | null;
 };
+// History snapshots carry scores, never full evidence reports.
+export type HistoryJob = Omit<Job, 'match'> & { match: Pick<Match, 'id' | 'score'> | null };
 export type CompletionNotification = {
   id: string; job_id: string; job_title: string; status: 'succeeded' | 'failed';
   created_at: string; read_at: string | null; href: string;
 };
 export type NotificationPage = {
-  notifications: CompletionNotification[]; unread_count: number; next_offset: number | null;
+  notifications: CompletionNotification[]; unread_count: number; next_cursor: string | null; next_offset?: number | null;
 };
 
 export class ApiError extends Error {

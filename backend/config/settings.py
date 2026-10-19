@@ -163,3 +163,29 @@ if DOCUMENT_ENDPOINT:
         raise ImproperlyConfigured("DOCUMENT_ENDPOINT is restricted to local development object storage.")
     if not DOCUMENT_ACCESS_KEY or not DOCUMENT_SECRET_KEY or DOCUMENT_SCAN_MODE != "clamav":
         raise ImproperlyConfigured("Local object storage requires explicit local credentials and ClamAV.")
+
+# Dedicated SSE gateway: bounded shared work, no per-socket ORM/thread lifetime.
+STREAM_REDIS_HOST = os.getenv("STREAM_REDIS_HOST", "fanout")
+STREAM_REDIS_HOSTS = [host.strip() for host in os.getenv("STREAM_REDIS_HOSTS", STREAM_REDIS_HOST).split(",") if host.strip()]
+STREAM_REDIS_PORT = int(os.getenv("STREAM_REDIS_PORT", "6379"))
+STREAM_REDIS_USERNAME = os.getenv("STREAM_REDIS_USERNAME", "gateway")
+STREAM_REDIS_PASSWORD = os.getenv("STREAM_REDIS_PASSWORD", "")
+STREAM_REDIS_TLS = os.getenv("STREAM_REDIS_TLS", "false").lower() == "true"
+STREAM_MAX_CONNECTIONS = int(os.getenv("STREAM_MAX_CONNECTIONS", "2000"))
+STREAM_MAX_OWNER_CONNECTIONS = int(os.getenv("STREAM_MAX_OWNER_CONNECTIONS", "5"))
+STREAM_DB_WORKERS = int(os.getenv("STREAM_DB_WORKERS", "4"))
+STREAM_DB_QUEUE = int(os.getenv("STREAM_DB_QUEUE", "64"))
+STREAM_REPLAY_LIMIT = int(os.getenv("STREAM_REPLAY_LIMIT", "100"))
+STREAM_RETENTION_SECONDS = int(os.getenv("STREAM_RETENTION_SECONDS", "86400"))
+STREAM_HEARTBEAT_SECONDS = int(os.getenv("STREAM_HEARTBEAT_SECONDS", "15"))
+STREAM_MAX_LIFETIME_SECONDS = int(os.getenv("STREAM_MAX_LIFETIME_SECONDS", "900"))
+if not DEBUG and not STREAM_REDIS_TLS:
+    raise ImproperlyConfigured("Non-development fan-out requires verified Redis TLS.")
+
+if os.getenv("STREAM_GATEWAY_PROCESS", "false").lower() == "true" and DATABASES["default"]["ENGINE"] == "django.db.backends.postgresql":
+    DATABASES["default"]["CONN_MAX_AGE"] = 0
+    DATABASES["default"]["DISABLE_SERVER_SIDE_CURSORS"] = True
+    DATABASES["default"]["OPTIONS"].update(
+        pool={"min_size": 0, "max_size": STREAM_DB_WORKERS, "timeout": 2, "max_waiting": STREAM_DB_QUEUE},
+        options="-c statement_timeout=3000 -c lock_timeout=1000",
+    )

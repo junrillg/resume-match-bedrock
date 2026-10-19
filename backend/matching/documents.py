@@ -18,6 +18,7 @@ from django.utils import timezone
 from .models import Document, Job
 from .services import InvalidInput, MAX_FILE_BYTES, ProviderError, TransientProviderError, read_resume
 from .telemetry import emit
+from .events import lock_stream
 
 PARSER_VERSION = "pypdf-6.21-text-v1"
 
@@ -181,6 +182,7 @@ def document_text(claim):
     except (DocumentError, InvalidInput, UnicodeError) as exc:
         # Keep rejected files inaccessible while the relay removes their bytes.
         with transaction.atomic():
+            lock_stream(document.owner_id)
             current = Document.objects.select_for_update().get(pk=document.pk)
             if current.status not in {Document.Status.DELETING, Document.Status.DELETED}:
                 current.status = Document.Status.REJECTED
@@ -191,6 +193,7 @@ def document_text(claim):
         emit("document.rejected", document_id=document.id, job_id=claim.id, request_id=claim.request_id, stage="worker", status="rejected")
         raise exc if isinstance(exc, DocumentError) else DocumentError() from None
     with transaction.atomic():
+        lock_stream(document.owner_id)
         current = Document.objects.select_for_update().get(pk=document.pk)
         if current.status not in {Document.Status.PENDING, Document.Status.READY} or current.expires_at <= timezone.now():
             raise DocumentError()
@@ -214,7 +217,7 @@ def tombstone(document):
     document.size_bytes = 0
     document.delete_after = max(now, document.upload_lease_until or now)
     document.save()
-    # Lock order is document -> job, shared with worker completion/admission.
+    # Caller locks owner stream -> document -> job, shared with all mutations.
     for job in list(Job.objects.select_for_update().filter(document=document)):
         job.delete()
 
@@ -225,13 +228,20 @@ def reconcile_documents(limit=100):
         Q(expires_at__lte=now) | Q(status=Document.Status.UPLOADING, upload_deadline__lte=now)).values_list("pk", flat=True)[:limit]
     for document_id in list(expired):
         with transaction.atomic():
+            lock_stream(Document.objects.filter(pk=document_id).values_list("owner_id", flat=True).first())
             document = Document.objects.select_for_update().filter(pk=document_id).first()
             if document and document.status not in {Document.Status.DELETING, Document.Status.DELETED}:
                 tombstone(document)
     # Legacy source-cleared records still follow the same visible-history policy.
-    Job.objects.filter(document__isnull=True, created_at__lte=now - timedelta(days=settings.DOCUMENT_RETENTION_DAYS)).delete()
+    for job in list(Job.objects.filter(document__isnull=True, created_at__lte=now - timedelta(days=settings.DOCUMENT_RETENTION_DAYS))[:limit]):
+        with transaction.atomic():
+            lock_stream(job.owner_id)
+            Job.objects.filter(pk=job.pk).delete()
     from .models import Match
-    Match.objects.filter(job__isnull=True, created_at__lte=now - timedelta(days=settings.DOCUMENT_RETENTION_DAYS)).delete()
+    for match in list(Match.objects.filter(job__isnull=True, created_at__lte=now - timedelta(days=settings.DOCUMENT_RETENTION_DAYS))[:limit]):
+        with transaction.atomic():
+            lock_stream(match.owner_id)
+            Match.objects.filter(pk=match.pk).delete()
     now = timezone.now()
     candidates = Document.objects.filter(status__in=[Document.Status.DELETING, Document.Status.REJECTED], delete_after__lte=now).values_list("pk", flat=True)[:limit]
     for document_id in list(candidates):
@@ -242,6 +252,7 @@ def reconcile_documents(limit=100):
             emit("document.delete_pending", document_id=document.id, stage="recovery", status="deleting")
             continue
         with transaction.atomic():
+            lock_stream(Document.objects.filter(pk=document_id).values_list("owner_id", flat=True).first())
             current = Document.objects.select_for_update().get(pk=document_id)
             if current.status in {Document.Status.DELETING, Document.Status.REJECTED} and (not current.upload_lease_until or current.upload_lease_until <= timezone.now()):
                 rejected = current.status == Document.Status.REJECTED
@@ -266,6 +277,7 @@ def reconcile_documents(limit=100):
     stale = Document.objects.filter(status=Document.Status.DELETED, deleted_at__lte=timezone.now() - timedelta(days=7))
     for document_id in list(stale.values_list("pk", flat=True)[:limit]):
         with transaction.atomic():
+            lock_stream(Document.objects.filter(pk=document_id).values_list("owner_id", flat=True).first())
             document = Document.objects.select_for_update().get(pk=document_id)
             if not document.upload_lease_until or document.upload_lease_until <= timezone.now():
                 Job.objects.filter(document=document).delete()

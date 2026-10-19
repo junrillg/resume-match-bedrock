@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent, type MouseEvent } from 'react';
-import { api, ApiError, downloadDocument, type CompletionNotification, type NotificationPage, type DocumentRecord, type Job, type Match, type Requirement, type Session } from './api';
+import { api, ApiError, downloadDocument, type CompletionNotification, type NotificationPage, type DocumentRecord, type Job, type HistoryJob, type Match, type Requirement, type Session } from './api';
 
+import { workspaceEvents, type WorkspaceUpdates } from './workspaceEvents';
 import { readRoute, jobPath, resultPath, reportPath, type Route } from './navigation';
 
 const defaults: Requirement[] = [
@@ -8,7 +9,7 @@ const defaults: Requirement[] = [
   { skill: 'React', weight: 2 }, { skill: 'PostgreSQL', weight: 2 },
 ];
 const sample = 'SYNTHETIC SAMPLE — not a real candidate\n\nBackend engineer\nBuilt Python services and Django APIs for an internal inventory application.\nCreated React interfaces for searching products and reviewing stock.\nWrote integration tests and reviewed changes with the engineering team.';
-const activeJob = (job: Job) => job.status === 'uploading' || job.status === 'queued' || job.status === 'running';
+const activeJob = (job: Pick<Job, 'status'>) => job.status === 'uploading' || job.status === 'queued' || job.status === 'running';
 const reusableDocument = (document: DocumentRecord) => document.status === 'pending' || document.status === 'ready';
 const documentLabel = (document: DocumentRecord) => document.filename || (document.status === 'deleting' ? 'Document being deleted' : 'Unavailable original');
 const documentStatuses: Record<DocumentRecord['status'], string> = {
@@ -88,7 +89,7 @@ export default function App() {
   const [downloadingDocumentId, setDownloadingDocumentId] = useState<string | null>(null);
   const [deleteDocumentId, setDeleteDocumentId] = useState<string | null>(null);
   const [matches, setMatches] = useState<Match[]>([]);
-  const [jobs, setJobs] = useState<Job[]>([]);
+  const [jobs, setJobs] = useState<HistoryJob[]>([]);
   const [deleteRequested, setDeleteRequested] = useState(false);
   const [pollError, setPollError] = useState('');
   const [retryPending, setRetryPending] = useState(false);
@@ -99,7 +100,7 @@ export default function App() {
   const [routeRefresh, setRouteRefresh] = useState(0);
   const [notifications, setNotifications] = useState<CompletionNotification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
-  const [nextOffset, setNextOffset] = useState<number | null>(null);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loadingNotifications, setLoadingNotifications] = useState(false);
   const [readingIds, setReadingIds] = useState<string[]>([]);
   const [notificationError, setNotificationError] = useState('');
@@ -122,11 +123,11 @@ export default function App() {
   const selectedJob = route.kind === 'job' || route.kind === 'result'
     ? jobs.find((job) => job.id === route.id) ?? (routeJob?.id === route.id ? routeJob : null) : null;
   const selectedLegacy = route.kind === 'legacy' ? matches.find((match) => match.id === route.id) ?? null : null;
-  const displayedMatch = selectedJob?.match ?? selectedLegacy;
+  // List scores do not contain evidence. Only an independently authorized detail
+  // response can supply the report rendered on this job/result route.
+  const displayedMatch = (route.kind === 'job' || route.kind === 'result') && routeJob?.id === route.id
+    ? routeJob.match : selectedLegacy;
   const legacyMatches = matches.filter((match) => !jobs.some((job) => job.match?.id === match.id));
-  const hasActiveJobs = jobs.some(activeJob) || !!(routeJob && activeJob(routeJob)) || documents.some((document) => document.status === 'deleting');
-  const activeState = useRef(hasActiveJobs);
-  activeState.current = hasActiveJobs;
   const usableDocuments = documents.filter(reusableDocument);
   const savedDocument = usableDocuments.find((document) => document.id === savedDocumentId);
   const documentToDelete = documents.find((document) => document.id === deleteDocumentId);
@@ -167,7 +168,7 @@ export default function App() {
     setJobs([]); setRouteJob(null); setRouteError(''); setPollError(''); setRetryPending(false);
     setSource('paste'); submission.current = null; deletedDocumentIds.current.clear(); deletedJobIds.current.clear();
     setDocuments([]); setSavedDocumentId(''); setReprocess(false); setDeleteDocumentId(null); setDownloadingDocumentId(null); setDeletingDocumentId(null);
-    setNotifications([]); setUnreadCount(0); setNextOffset(null); setReadingIds([]); setNotificationError(''); setLoadingNotifications(false); hasMorePages.current = false;
+    setNotifications([]); setUnreadCount(0); setNextCursor(null); setReadingIds([]); setNotificationError(''); setLoadingNotifications(false); hasMorePages.current = false;
     setJobTitle('Full stack engineer'); setRequirements(defaults); setDeleteRequested(false);
     if (fileRef.current) fileRef.current.value = '';
   }
@@ -188,14 +189,14 @@ export default function App() {
     setNotifications((previous) => reset || !hasMorePages.current ? page.notifications : [
       ...page.notifications, ...previous.filter((notice) => !page.notifications.some((item) => item.id === notice.id)),
     ]);
-    if (reset || !hasMorePages.current) setNextOffset(page.next_offset);
+    if (reset || !hasMorePages.current) setNextCursor(page.next_cursor ?? null);
   }
   async function loadWorkspace() {
     const epoch = privateEpoch.current;
     const revision = workspaceRevision.current;
     const [jobList, reportList, documentList, inbox] = await Promise.all([
-      api<{ jobs: Job[] }>('jobs/'), api<{ matches: Match[] }>('matches/'),
-      api<{ documents: DocumentRecord[] }>('documents/'), api<NotificationPage>('notifications/?offset=0'),
+      api<{ jobs: HistoryJob[] }>('jobs/?summary=true'), api<{ matches: Match[] }>('matches/?legacy=true'),
+      api<{ documents: DocumentRecord[] }>('documents/'), api<NotificationPage>('notifications/?cursor='),
     ]);
     if (epoch !== privateEpoch.current || revision !== workspaceRevision.current) return;
     setJobs(jobList.jobs); setMatches(reportList.matches); setDocuments(documentList.documents); updateInbox(inbox);
@@ -205,7 +206,7 @@ export default function App() {
     try {
       const current = await refreshSession();
       if (epoch !== privateEpoch.current) return;
-      if (current.authenticated) await loadWorkspace(); else clearPrivateState();
+      if (!current.authenticated) clearPrivateState();
     } catch (error) {
       if (epoch !== privateEpoch.current) return;
       setError(errorText(error));
@@ -238,62 +239,96 @@ export default function App() {
     }
   }, [route.kind, route.path, selectedJob?.id, selectedJob?.status, selectedJob?.match?.id, routeError, session?.authenticated]);
 
-  // Idle inbox catch-up is required even when no active job is known in this tab.
+  // Persistent server events announce changes; REST reads remain authorized truth.
   useEffect(() => {
     if (!session?.authenticated) return;
     const epoch = privateEpoch.current;
-    let cancelled = false; let inFlight = false; let catchUp = false; let failures = 0;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let controller: AbortController | undefined;
-    const visible = () => document.visibilityState !== 'hidden' && navigator.onLine;
-    const schedule = (delay: number) => { clearTimeout(timer); if (!cancelled && visible()) timer = setTimeout(poll, delay); };
-    async function poll() {
-      if (cancelled || !visible()) return;
-      if (inFlight) { catchUp = true; return; }
-      inFlight = true; controller = new AbortController();
+    const valid = () => epoch === privateEpoch.current;
+    async function apply(updates: WorkspaceUpdates, signal: AbortSignal) {
       const revision = workspaceRevision.current;
-      const current = routeCurrent.current;
-      const detailId = current.kind === 'job' || current.kind === 'result' ? current.id : null;
-      try {
+      let rescheduled = false;
+      const validRead = () => {
+        if (!valid() || signal.aborted) return false;
+        if (revision === workspaceRevision.current) return true;
+        if (!rescheduled) { rescheduled = true; queueMicrotask(() => monitorWake.current?.()); }
+        return false;
+      };
+      if (updates.full) {
+        const currentSession = await api<Session>('session/', { signal });
+        if (!validRead()) return;
+        if (!currentSession.authenticated || currentSession.username !== session?.username) { await loseSession(); return; }
+        const current = routeCurrent.current;
+        const detailId = current.kind === 'job' || current.kind === 'result' ? current.id : null;
         const [jobList, reportList, documentList, inbox, detail] = await settledBatch(
-          api<{ jobs: Job[] }>('jobs/', { signal: controller.signal }),
-          api<{ matches: Match[] }>('matches/', { signal: controller.signal }),
-          api<{ documents: DocumentRecord[] }>('documents/', { signal: controller.signal }),
-          api<NotificationPage>('notifications/?offset=0', { signal: controller.signal }),
-          detailId ? api<Job>(`jobs/${detailId}/`, { signal: controller.signal }).catch((error) => {
+          api<{ jobs: HistoryJob[] }>('jobs/?summary=true', { signal }), api<{ matches: Match[] }>('matches/?legacy=true', { signal }),
+          api<{ documents: DocumentRecord[] }>('documents/', { signal }), api<NotificationPage>('notifications/?cursor=', { signal }),
+          detailId ? api<Job>(`jobs/${detailId}/`, { signal }).catch((error) => {
             if (error instanceof ApiError && error.status === 404) return null;
             throw error;
           }) : Promise.resolve(null),
         );
-        if (cancelled || epoch !== privateEpoch.current || revision !== workspaceRevision.current) return;
-        activeState.current = jobList.jobs.some(activeJob) || !!(detail && activeJob(detail)) || documentList.documents.some((item) => item.status === 'deleting');
-        setJobs(jobList.jobs); setMatches(reportList.matches); setDocuments(documentList.documents); updateInbox(inbox);
+        if (!validRead()) return;
+        setJobs(jobList.jobs.filter((job) => !deletedJobIds.current.has(job.id) && (!job.document || !deletedDocumentIds.current.has(job.document.id))));
+        setMatches(reportList.matches); setDocuments(documentList.documents.filter((item) => !deletedDocumentIds.current.has(item.id))); updateInbox(inbox, true);
         if (detailId && 'id' in routeCurrent.current && routeCurrent.current.id === detailId) {
           setRouteJob(detail);
           if (!detail) setRouteError('This comparison is unavailable. It may have expired or been deleted, or belong to another account.');
         }
-        failures = 0; setPollError('');
-      } catch (error) {
-        if (cancelled || epoch !== privateEpoch.current || !visible()) return;
-        if (error instanceof ApiError && error.status === 401) await loseSession();
-        else { failures += 1; setPollError(errorText(error)); }
-      } finally {
-        inFlight = false;
-        if (!cancelled && epoch === privateEpoch.current) {
-          const delay = catchUp ? 0 : failures ? Math.min(30000, 1000 * 2 ** Math.min(failures, 5)) : activeState.current ? 1000 : 15000;
-          catchUp = false; schedule(delay);
-        }
+      } else {
+        // Limit targeted REST concurrency to four, regardless of completion burst size.
+        const work: (() => Promise<void>)[] = [];
+        for (const id of updates.jobs) work.push(async () => {
+          let job: Job | null;
+          try { job = await api<Job>(`jobs/${id}/`, { signal }); }
+          catch (error) { if (error instanceof ApiError && error.status === 404) job = null; else throw error; }
+          if (!validRead() || deletedJobIds.current.has(id) || (job?.document && deletedDocumentIds.current.has(job.document.id))) return;
+          if (job) {
+            const updated = job;
+            setJobs((previous) => [updated, ...previous.filter((item) => item.id !== id)].slice(0, 100));
+            if (updated.document) setDocuments((previous) => [updated.document!, ...previous.filter((item) => item.id !== updated.document!.id)].slice(0, 100));
+          } else setJobs((previous) => previous.filter((item) => item.id !== id));
+          if ('id' in routeCurrent.current && routeCurrent.current.id === id) {
+            setRouteJob(job);
+            if (!job) setRouteError('This comparison is unavailable. It may have expired or been deleted, or belong to another account.');
+          }
+        });
+        for (const id of updates.documents) work.push(async () => {
+          let document: DocumentRecord | null;
+          try { document = await api<DocumentRecord>(`documents/${id}/`, { signal }); }
+          catch (error) { if (error instanceof ApiError && error.status === 404) document = null; else throw error; }
+          if (!validRead() || deletedDocumentIds.current.has(id)) return;
+          if (document) { const updated = document; setDocuments((previous) => [updated, ...previous.filter((item) => item.id !== id)].slice(0, 100)); }
+          else setDocuments((previous) => previous.filter((item) => item.id !== id));
+        });
+        if (updates.inbox) work.push(async () => {
+          const inbox = await api<NotificationPage>('notifications/?cursor=', { signal });
+          if (validRead()) updateInbox(inbox);
+        });
+        let next = 0;
+        await settledBatch(...Array.from({ length: Math.min(4, work.length) }, async () => {
+          while (next < work.length) { const task = work[next++]; await task(); }
+        }));
       }
+      if (valid()) setPollError('');
     }
-    const wake = () => { clearTimeout(timer); if (visible()) { if (inFlight) catchUp = true; else void poll(); } };
-    const returnToApp = () => { resetInboxOnRefresh.current = true; wake(); };
-    const connection = () => { setOffline(!navigator.onLine); if (visible()) returnToApp(); else { clearTimeout(timer); controller?.abort(); } };
-    monitorWake.current = wake;
-    window.addEventListener('online', connection); window.addEventListener('offline', connection); window.addEventListener('focus', returnToApp); document.addEventListener('visibilitychange', connection);
-    schedule(activeState.current ? 1000 : 15000);
-    return () => { cancelled = true; clearTimeout(timer); controller?.abort(); monitorWake.current = null;
-      window.removeEventListener('online', connection); window.removeEventListener('offline', connection); window.removeEventListener('focus', returnToApp); document.removeEventListener('visibilitychange', connection); };
-  }, [session?.authenticated]);
+    const delivery = workspaceEvents({
+      apply,
+      error: (error) => {
+        if (!valid()) return;
+        if (error instanceof ApiError && error.status === 401) void loseSession();
+        else setPollError(errorText(error));
+      },
+      connectionError: (message) => {
+        if (!valid()) return;
+        setPollError(message ?? 'The live connection is reconnecting. Saved updates remain available.');
+
+      },
+      sessionEnded: () => { if (valid()) void loseSession(); },
+      connection: setOffline,
+    });
+    monitorWake.current = () => { resetInboxOnRefresh.current = true; delivery.reconcile(); };
+    return () => { delivery.stop(); monitorWake.current = null; };
+  }, [session?.authenticated, session?.username]);
 
   async function perform(action: (epoch: number) => Promise<void>, pending: (value: boolean) => void) {
     const epoch = privateEpoch.current; pending(true); setError('');
@@ -309,7 +344,6 @@ export default function App() {
       await api<Session>('login/', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password }) }, session?.csrfToken);
       if (epoch !== privateEpoch.current) return;
       setPassword(''); await refreshSession();
-      if (epoch === privateEpoch.current) await loadWorkspace();
     }, setSigningIn);
   }
   async function logout() {
@@ -357,13 +391,20 @@ export default function App() {
         setError('The source for this comparison was deleted while admission was in progress. Choose another source.'); return;
       }
       workspaceRevision.current += 1;
-      setJobs((previous) => [job, ...previous.filter((item) => item.id !== job.id)]);
-      if (job.match) setMatches((previous) => [job.match!, ...previous.filter((item) => item.id !== job.match!.id)]);
-      if (job.document) setDocuments((previous) => [job.document!, ...previous.filter((item) => item.id !== job.document!.id)]);
-      activeState.current = activeJob(job) || activeState.current;
+      setJobs((previous) => {
+        const observed = previous.find((item) => item.id === job.id);
+        const terminal = observed && (observed.status === 'succeeded' || observed.status === 'failed');
+        // A delayed acceptance receipt must not regress an already observed outcome.
+        return [terminal ? observed : job, ...previous.filter((item) => item.id !== job.id)];
+      });
+      if (job.document) setDocuments((previous) => {
+        const observed = previous.find((item) => item.id === job.document!.id);
+        const checked = observed && (observed.status === 'ready' || observed.status === 'rejected');
+        const staleReceipt = job.document!.status === 'pending' || job.document!.status === 'uploading';
+        return [checked && staleReceipt ? observed : job.document!, ...previous.filter((item) => item.id !== job.document!.id)];
+      });
       setDeleteRequested(false); setPollError(''); if (job.status === 'uploading') setRetryPending(true);
       if (navigation === routeRevision.current && routeCurrent.current.kind === 'home') navigate(job.status === 'succeeded' && job.match ? resultPath(job.id) : jobPath(job.id));
-      monitorWake.current?.();
     }, setSubmitting);
   }
   async function deleteSelection() {
@@ -377,7 +418,7 @@ export default function App() {
       if (jobId) deletedJobIds.current.add(jobId);
       setJobs((previous) => previous.filter((job) => jobId ? job.id !== jobId : job.match?.id !== matchId));
       setMatches((previous) => previous.filter((match) => match.id !== matchId));
-      hasMorePages.current = false; setNextOffset(null); setNotifications([]); setRouteJob((previous) => previous?.id === jobId || previous?.match?.id === matchId ? null : previous); setDeleteRequested(false);
+      hasMorePages.current = false; setNextCursor(null); setNotifications([]); setRouteJob((previous) => previous?.id === jobId || previous?.match?.id === matchId ? null : previous); setDeleteRequested(false);
       if (navigation === routeRevision.current) navigate('/');
       monitorWake.current?.();
     }, setDeletingSelection);
@@ -409,7 +450,7 @@ export default function App() {
       removedJobs.forEach((id) => deletedJobIds.current.add(id));
       setDocuments((previous) => previous.filter((item) => item.id !== documentId));
       setJobs((previous) => previous.filter((job) => job.document?.id !== documentId));
-      setMatches([]); hasMorePages.current = false; setNextOffset(null); setNotifications([]); setDeleteRequested(false); setDeleteDocumentId(null);
+      setMatches([]); hasMorePages.current = false; setNextCursor(null); setNotifications([]); setDeleteRequested(false); setDeleteDocumentId(null);
       setRouteJob((previous) => previous?.document?.id === documentId ? null : previous);
       const current = routeCurrent.current;
       if ((current.kind === 'job' || current.kind === 'result') && removedJobs.includes(current.id)) navigate('/');
@@ -425,7 +466,7 @@ export default function App() {
       if (epoch !== privateEpoch.current) return;
       workspaceRevision.current += 1;
       setNotifications((previous) => previous.map((item) => item.id === updated.id ? updated : item));
-      setUnreadCount((previous) => Math.max(0, previous - 1)); monitorWake.current?.();
+      setUnreadCount((previous) => Math.max(0, previous - 1));
     } catch (error) {
       if (epoch !== privateEpoch.current) return;
       if (error instanceof ApiError && error.status === 401) await loseSession();
@@ -433,13 +474,13 @@ export default function App() {
     } finally { if (epoch === privateEpoch.current) setReadingIds((previous) => previous.filter((id) => id !== notice.id)); }
   }
   async function loadMoreNotifications() {
-    if (nextOffset === null || loadingNotifications) return;
+    if (nextCursor === null || loadingNotifications) return;
     const epoch = privateEpoch.current; const revision = workspaceRevision.current;
     setLoadingNotifications(true); setNotificationError('');
     try {
-      const page = await api<NotificationPage>(`notifications/?offset=${nextOffset}`);
+      const page = await api<NotificationPage>(`notifications/?cursor=${encodeURIComponent(nextCursor)}`);
       if (epoch !== privateEpoch.current || revision !== workspaceRevision.current) return;
-      hasMorePages.current = true; setUnreadCount(page.unread_count); setNextOffset(page.next_offset);
+      hasMorePages.current = true; setUnreadCount(page.unread_count); setNextCursor(page.next_cursor ?? null);
       setNotifications((previous) => [...previous, ...page.notifications.filter((notice) => !previous.some((item) => item.id === notice.id))]);
     } catch (error) {
       if (epoch !== privateEpoch.current) return;
@@ -466,7 +507,7 @@ export default function App() {
         {route.kind !== 'home' && <div className="route-intro"><h1 ref={routeHeading} tabIndex={-1}>{route.kind === 'not-found' ? 'Page unavailable' : heading}</h1>{route.kind === 'job' && activeJob(selectedJob ?? { status: 'queued' } as Job) && <p>You can keep working. A notification will be saved here when this comparison finishes, including if you close the browser and return later.</p>}</div>}
         {unreadCount > 0 && route.kind !== 'notifications' && <div className="completion-summary" role="status"><span>{unreadCount} {unreadCount === 1 ? 'comparison has an update' : 'comparisons have updates'}.</span> <a href="/notifications" onClick={follow}>View notifications</a></div>}
         {offline && <div className="monitor-note" role="status">You’re offline. Accepted comparisons continue on the server. Updates will resume when you reconnect.</div>}
-        {pollError && <div className="error monitor-note" role="alert"><strong>Status updates paused.</strong><p>{pollError} Your job has not been marked failed. We’ll retry automatically with a bounded delay.</p><button type="button" className="text-button" onClick={() => monitorWake.current?.()}>Resume status updates</button></div>}
+        {pollError && <div className="error monitor-note" role="alert"><strong>Status updates paused.</strong><p>{pollError} Your job has not been marked failed. You can keep working and refresh saved updates at any time.</p><button type="button" className="text-button" onClick={() => monitorWake.current?.()}>Resume status updates</button></div>}
         <div className="workspace-grid"><div>
           <div hidden={route.kind !== 'home'}>
             {/* The draft stays mounted across routes, including the selected File. */}
@@ -502,11 +543,12 @@ export default function App() {
                 </details>
                 {!displayedMatch && <button className="text-button danger" type="button" disabled={deletingSelection} onClick={() => setDeleteRequested(true)}>Delete this comparison</button>}
               </section>
+              {route.kind === 'result' && selectedJob.status === 'succeeded' && !displayedMatch && routeLoading && <p role="status">Loading report evidence…</p>}
               {route.kind === 'result' && displayedMatch && <MatchResult match={displayedMatch} busy={deletingSelection} onDelete={() => setDeleteRequested(true)} />}
             </>}
           </div>}
           {route.kind === 'legacy' && (displayedMatch ? <MatchResult match={displayedMatch} busy={deletingSelection} onDelete={() => setDeleteRequested(true)} /> : <section className="panel route-message"><h2>Report unavailable</h2><p>This earlier report is not in your available recent history. It may have expired or been deleted.</p><a href="/" onClick={follow}>Return to your workspace</a></section>)}
-          {route.kind === 'notifications' && <section className="panel inbox" aria-labelledby="inbox-heading"><div className="section-heading"><h2 id="inbox-heading">Your comparison updates</h2><span>{unreadCount} unread</span></div><p>Reports and processing failures are saved here. Open an update when you’re ready; it won’t interrupt another comparison.</p><p className="inbox-refresh-note">Returning to this tab refreshes the list. Load older updates again after returning or deleting a source.</p>{notificationError && <p className="error" role="alert">{notificationError}</p>}{notifications.length ? noticeList(notifications) : <div className="inbox-empty"><h3>No updates yet</h3><p>Accepted comparisons continue in the background. Their completion or failure will appear here.</p><a href="/" onClick={follow}>Start a comparison</a></div>}{nextOffset !== null && <button className="text-button" type="button" disabled={loadingNotifications} onClick={loadMoreNotifications}>{loadingNotifications ? 'Loading older updates…' : 'Load older updates'}</button>}</section>}
+          {route.kind === 'notifications' && <section className="panel inbox" aria-labelledby="inbox-heading"><div className="section-heading"><h2 id="inbox-heading">Your comparison updates</h2><span>{unreadCount} unread</span></div><p>Reports and processing failures are saved here. Open an update when you’re ready; it won’t interrupt another comparison.</p><p className="inbox-refresh-note">Returning to this tab refreshes the list. Load older updates again after returning or deleting a source.</p>{notificationError && <p className="error" role="alert">{notificationError}</p>}{notifications.length ? noticeList(notifications) : <div className="inbox-empty"><h3>No updates yet</h3><p>Accepted comparisons continue in the background. Their completion or failure will appear here.</p><a href="/" onClick={follow}>Start a comparison</a></div>}{nextCursor !== null && <button className="text-button" type="button" disabled={loadingNotifications} onClick={loadMoreNotifications}>{loadingNotifications ? 'Loading older updates…' : 'Load older updates'}</button>}</section>}
           {route.kind === 'not-found' && <section className="panel route-message"><h2>We couldn’t find that page</h2><p>Use your workspace or a comparison link from your notifications.</p><a href="/" onClick={follow}>Open your workspace</a></section>}
           {deleteRequested && (selectedJob || selectedLegacy) && <div className="delete-confirm" role="alert"><p>Delete this comparison and its evidence? Its saved document remains available. This cannot be undone.</p><button className="danger-button" type="button" disabled={deletingSelection} onClick={deleteSelection}>Delete comparison</button><button className="text-button" type="button" disabled={deletingSelection} onClick={() => setDeleteRequested(false)}>Keep comparison</button></div>}
         </div>

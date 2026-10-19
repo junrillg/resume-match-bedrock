@@ -34,6 +34,9 @@ x-backend: &backend
     DOCUMENT_ACCESS_KEY: ${OBJECT_API_ACCESS_KEY:?Run ./scripts/lab up first}
     DOCUMENT_SECRET_KEY: ${OBJECT_API_SECRET_KEY:?Run ./scripts/lab up first}
     LAB_SERVICE_NAME: api
+    STREAM_REDIS_HOST: fanout
+    STREAM_REDIS_HOSTS: fanout,fanout-b
+    STREAM_REDIS_PASSWORD: ${STREAM_GATEWAY_PASSWORD:?Run ./scripts/lab up first}
   init: true
   read_only: true
   tmpfs:
@@ -43,6 +46,105 @@ x-backend: &backend
   cap_drop: [ALL]
 
 services:
+  fanout: &fanout-service
+    image: valkey/valkey:8.1.10-alpine3.24@sha256:081c2f5cb575efc901aa80ff9cdbd1ec6a301682fd35e1ebb4b0990a4a4a8507
+    entrypoint: [sh, /start-fanout.sh]
+    environment:
+      STREAM_GATEWAY_PASSWORD: ${STREAM_GATEWAY_PASSWORD:?Run ./scripts/lab up first}
+      STREAM_RELAY_PASSWORD: ${STREAM_RELAY_PASSWORD:?Run ./scripts/lab up first}
+      STREAM_VIEWER_PASSWORD: ${STREAM_VIEWER_PASSWORD:?Run ./scripts/lab up first}
+    volumes:
+      - ./viewing/start-fanout.sh:/start-fanout.sh:ro
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    mem_limit: 192m
+    healthcheck:
+      test: [CMD-SHELL, 'REDISCLI_AUTH="$${STREAM_GATEWAY_PASSWORD}" valkey-cli --user gateway ping | grep -q PONG']
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
+  fanout-b:
+    <<: *fanout-service
+
+  fanout-viewer:
+    image: ghcr.io/joeferner/redis-commander@sha256:1ad484c1fc0a3b4072dfa2bb10d44f0eba8ecb342c8c0f9e17cb21a6557e4b7e
+    entrypoint: [sh, /start-fanout-viewer.sh]
+    environment:
+      STREAM_GUI_PASSWORD: ${STREAM_GUI_PASSWORD:?Run ./scripts/lab up first}
+      STREAM_VIEWER_PASSWORD: ${STREAM_VIEWER_PASSWORD:?Run ./scripts/lab up first}
+    volumes:
+      - ./viewing/start-fanout-viewer.sh:/start-fanout-viewer.sh:ro
+    ports: [127.0.0.1:8089:8081]
+    depends_on:
+      fanout:
+        condition: service_healthy
+      fanout-b:
+        condition: service_healthy
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    mem_limit: 256m
+    healthcheck:
+      test: [CMD, node, bin/healthcheck.js]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
+  events-a: &event-gateway
+    <<: *backend
+    command: [uvicorn, event_gateway:application, --host, 0.0.0.0, --port, "8001", --no-access-log, --log-level, warning, --timeout-keep-alive, "5"]
+    environment:
+      <<: *backend-environment
+      LAB_SERVICE_NAME: gateway
+      STREAM_GATEWAY_PROCESS: "true"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      fanout:
+        condition: service_healthy
+      fanout-b:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health/', timeout=3)"]
+      interval: 5s
+      timeout: 4s
+      retries: 12
+    ulimits:
+      nofile: {soft: 10000, hard: 10000}
+    mem_limit: 384m
+    restart: unless-stopped
+
+  events-b:
+    <<: *event-gateway
+
+  event-relay:
+    <<: *backend
+    command: [python, manage.py, relay_events]
+    environment:
+      <<: *backend-environment
+      STREAM_REDIS_USERNAME: relay
+      STREAM_REDIS_PASSWORD: ${STREAM_RELAY_PASSWORD:?Run ./scripts/lab up first}
+      LAB_SERVICE_NAME: event-relay
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      fanout:
+        condition: service_healthy
+      fanout-b:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, python, -c, "import pathlib,time; assert time.time()-pathlib.Path('/tmp/resume-match-event-relay-heartbeat').stat().st_mtime<15"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
   objectstore:
     image: chrislusf/seaweedfs:4.48@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d
     entrypoint: [sh, /start-storage.sh]
@@ -324,6 +426,12 @@ services:
     depends_on:
       api:
         condition: service_healthy
+      events-a:
+        condition: service_healthy
+      events-b:
+        condition: service_healthy
+    ulimits:
+      nofile: {soft: 10000, hard: 10000}
     healthcheck:
       test: [CMD, wget, -q, --spider, http://127.0.0.1:8080/]
       interval: 5s

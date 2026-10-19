@@ -23,10 +23,10 @@ def persist_completion(job, stage):
 
 def visible_notifications(owner):
     now = timezone.now()
-    return CompletionNotification.objects.filter(job__owner=owner).filter(
+    return CompletionNotification.objects.filter(owner=owner).filter(
         Q(job__document__expires_at__gt=now) |
         Q(job__document__isnull=True, job__created_at__gt=now - timedelta(days=settings.DOCUMENT_RETENTION_DAYS))
-    ).exclude(job__document__status__in=["deleting", "deleted"]).select_related("job")
+    ).exclude(job__document__status__in=["deleting", "deleted"]).select_related("job").only("id", "owner_id", "job__owner_id", "job_id", "status", "created_at", "read_at", "job__id", "job__job_title")
 
 
 def serialize_notification(notification):
