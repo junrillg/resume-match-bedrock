@@ -2,7 +2,7 @@
 
 The system preserves an uploaded original, processes comparisons independently of the browser and returns checked evidence with an application-owned score. Its core boundaries are durable source storage, recoverable dispatch, fenced results and owner-controlled retrieval/deletion.
 
-![Seven-step local execution and concurrent result reads.](https://raw.githubusercontent.com/junrillg/resume-match-bedrock/4dec8c528107a7c22d4364167a9d9a252a280e5e/docs/assets/architecture.svg)
+![Seven-step local execution and concurrent result reads.](assets/architecture-completion.svg)
 
 ## Requirements and data ownership
 
@@ -12,6 +12,7 @@ The system preserves an uploaded original, processes comparisons independently o
 | Document record | PostgreSQL owns account, generated key, checksum, media type, lifecycle and expiry |
 | Extraction | Up to 10 PDF pages / 30,000 characters; PostgreSQL cache records parser version |
 | Comparison | 1–20 unique weighted requirements; PostgreSQL job/outbox/result records |
+| Completion | One terminal notification per job; owner inbox/read state shares source/job retention |
 | Access | Authenticated owner, CSRF on browser mutations, clean-only attachment download |
 | Retention | Configurable 90-day policy for documents/derived results; earlier owner deletion |
 
@@ -23,7 +24,7 @@ Steps **1 Submit · 2 Accept · 3 Relay · 4 Queue · 5 Process · 6 Save · 7 R
 
 New-source admission has three boundaries: reserve document/job identity in PostgreSQL; PUT the original; then commit pending document + queued job + outbox together. The object service and database do not share a transaction. Reserved-upload identity, leases, deadlines and reconciliation close partial-write/deletion failures. A concurrent replay can return `202 uploading`; only a finalized queued receipt confirms stored source. Saved-source reuse queues another comparison without uploading again.
 
-After commit, the relay publishes only a UUID. The worker fetches verified source, passes the malware gate, parses or reuses matching extraction, calls the evidence provider, validates quotes, and saves a fenced score/result. Browser reads overlap those processes. At-least-once delivery and provider calls can repeat; the database permits one committed report per job.
+After commit, the relay publishes only a UUID. The worker fetches verified source, passes the malware gate, parses or reuses matching extraction, calls the evidence provider, validates quotes, and saves a fenced score/result and terminal notification atomically. Browser reads overlap those processes. At-least-once delivery and provider calls can repeat; the database permits one committed report per job.
 
 ## Service choices
 
@@ -109,4 +110,4 @@ The [research](research.md) supports these choices. Passing local checks and moc
 
 ## Processing and completion journey
 
-[ADR 0008](decisions/0008-nonblocking-completion.md) plans a dedicated processing route, durable owner inbox and result route. Implementation will separate action pending state from worker progress, preserve navigation and keep completion discoverable after returning. The design, durable inbox, UI and communication milestones are verified and committed separately.
+[ADR 0008](decisions/0008-nonblocking-completion.md) defines the shipped processing, inbox and result routes. Action pending state is separate from worker progress; saved completion notices survive leaving the page. A paused-worker browser run verified a second submission, an unchanged off-route draft, explicit notification access, result refresh, read persistence and completion while the app tab was closed. The design, durable inbox and UI were verified and published as separate milestones.

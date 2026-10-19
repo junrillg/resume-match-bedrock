@@ -96,17 +96,20 @@ sequenceDiagram
             Job->>DB: finish_job(): BEGIN, lock Document then Job
             Note over Job,DB: Recheck document lifecycle/expiry, RUNNING status, matching current lease, unexpired lease and overall deadline before committing a result
             alt Stale lease, deleted/missing job or unavailable document
-                Job->>Job: Return false, no Match creation
+                Job->>Job: Return false, no Match or completion notification
             else Current claim but document is not READY
-                Job->>DB: fail_job(document_rejected), COMMIT, no score
+                Job->>DB: fail_job(document_rejected) plus unique failure notification, COMMIT, no score
             else Current claim but overall deadline exceeded
-                Job->>DB: fail_job(deadline_exceeded), COMMIT, no score
+                Job->>DB: fail_job(deadline_exceeded) plus unique failure notification, COMMIT, no score
             else Current claim with validated evidence and READY document
                 Job->>Job: calculate_score(): matched weights / total weights * 100
                 Note over Job: Decimal with ROUND_HALF_UP to two places, 8 matched weight / 10 total = 80.00
-                Job->>DB: Match.objects.create(), Job SUCCEEDED, clear legacy resume_text and lease, COMMIT
-                Job->>Job: job_event() -> on_commit emit(job.succeeded)
+                Job->>DB: Match.objects.create(), Job SUCCEEDED, clear legacy resume_text and lease
+                Job->>DB: persist_completion(): get_or_create unique CompletionNotification for Job
+                Note over Job,DB: Match, terminal Job and notification commit together, any write failure rolls them all back
+                Job->>DB: COMMIT
+                Job->>Job: on_commit emit(notification.persisted), job_event() emits job.succeeded
             end
         end
     end
-    Note over Job,Provider: Bedrock supplies evidence, not the final score. Original bytes stay in object storage, cache/metadata stay in Document, report stays in Match
+    Note over Job,Provider: Bedrock supplies evidence, not the final score. Original bytes stay in object storage, cache/metadata stay in Document, report stays in Match, terminal outcomes and unread state stay in PostgreSQL

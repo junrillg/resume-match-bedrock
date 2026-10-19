@@ -9,8 +9,8 @@ flowchart TB
     STORE[("Object storage: local SeaweedFS or AWS S3")]
     FINAL["7. Transaction B: document lock then job lock; PENDING document + QUEUED job + OutboxEvent"]
     SAVED["Saved source: ownership/status/expiry check; QUEUED job + OutboxEvent in Transaction A"]
-    DB[("PostgreSQL: Document, Job, OutboxEvent, Match, RateBucket")]
-    RESP["emit(job.accepted) logs only; serialize_job() -> HTTP 202"]
+    DB[("PostgreSQL: Document, Job, OutboxEvent, Match, CompletionNotification, RateBucket")]
+    RESP["accepted_job() -> HTTP 202, Location and Retry-After; job.accepted is telemetry"]
     RELAY["8. relay_jobs.Command.handle() -> relay_once(): reconcile_documents(), recover_jobs(), due unsent outbox"]
     PUB["9. publish_job(): send_task(matching.process_job), application args = Job UUID"]
     MQ[("RabbitMQ durable direct exchange and quorum queue resume.match.quorum")]
@@ -21,8 +21,11 @@ flowchart TB
     EV["13. extract_evidence(): demo literal_evidence() / literal_match(), or Bedrock Converse"]
     PROVIDER["bedrock_request() + correlation_ids() -> boto3.converse(); local ConverseHandler or AWS Bedrock"]
     VAL["14. validate_evidence(): original skills/weights, exact quotes and skill boundaries"]
-    FIN["15. finish_job(): document/job locks, lease/deadline/lifecycle guards; calculate_score(); Match + SUCCEEDED"]
-    POLL["16. React poll() -> api(): jobs/, matches/, documents/ -> serializers -> MatchResult"]
+    FIN["15. finish_job(): document/job locks, lease/deadline/lifecycle guards; calculate_score(); Match + SUCCEEDED + unique completion notification atomically"]
+    ROUTE["Processing page /jobs/UUID; user can navigate, submit another comparison or sign out"]
+    POLL["16. Background status and inbox reads; bounded retries, visibility pause and reconnect catch-up"]
+    NOTICE["17. Persistent inbox: explicit result or failure link; separate Mark as read"]
+    RESULT["Result page /results/UUID -> owner-scoped job detail -> MatchResult"]
     REC["Failure/recovery: enqueue_again(), fail_job(), recover_jobs(); stale deliveries cannot commit"]
     LIFE["Reuse, download and deletion: document_download(), tombstone(), reconcile_documents()"]
     B --> H --> N --> V --> A --> NEW
@@ -47,8 +50,11 @@ flowchart TB
     EV -->|Demo branch| VAL
     VAL --> FIN
     FIN <--> DB
-    RESP --> POLL
+    RESP --> ROUTE --> POLL
     POLL <--> DB
+    POLL --> NOTICE
+    POLL -->|Same visible processing job succeeds| RESULT
+    NOTICE -->|User opens ready report| RESULT
     C --> REC
     REC --> DB
     DB --> LIFE

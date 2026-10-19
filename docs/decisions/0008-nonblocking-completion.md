@@ -1,6 +1,6 @@
 # ADR 0008: resumable processing and durable completion notifications
 
-Status: planned · 2026-10-19
+Status: implemented and locally verified · 2026-10-19
 
 ## Context
 
@@ -12,9 +12,9 @@ After finalized admission, navigate to `/jobs/<id>` immediately. Users can start
 
 Persist one completion notification per job in the same PostgreSQL transaction as its terminal outcome. Success and terminal failure notify; intermediate retries do not. The notification references the job, carries no source/evidence payload, and cascades with deletion and source expiry. Existing terminal jobs remain accessible in history; migration does not fabricate unread historical notifications.
 
-Expose owner-scoped notification listing and a CSRF-protected idempotent read acknowledgement. The inbox survives navigation, refresh and sign-out. Bounded background reads discover completion; focus/reconnect catches up. A closed browser receives its saved notification when it returns. This iteration supplies in-app delivery; external email/push needs a separately configured delivery channel.
+Expose owner-scoped notification listing and a CSRF-protected idempotent read acknowledgement. The inbox survives navigation, refresh and sign-out. Bounded background reads discover completion; focus/reconnect catches up. A closed browser receives its saved notification when it returns. This implementation supplies in-app delivery; external email/push needs a separately configured delivery channel.
 
-Processing and result routes resolve the authoritative owner-scoped job endpoint, including older jobs outside the recent list. Only the same visible processing route can automatically transition to `/results/<job-id>`. Completion elsewhere adds an inbox entry without replacing a draft or stealing focus. Notification activation opens its result/status destination; acknowledgement failure must not prevent result access.
+Processing and result routes resolve the authoritative owner-scoped job endpoint, including older jobs outside the recent list. Only the same visible processing route can automatically transition to `/results/<job-id>`. Completion elsewhere adds an inbox entry without replacing a draft or stealing focus. Notification activation opens its result/status destination. Mark as read is a separate persisted action; acknowledgement failure does not prevent result access.
 
 Pending state belongs to the action/entity, never to the duration of the worker job. Navigation and sign-out stay available. Async responses are fenced against session changes, navigation and deletion; errors show recoverable states without declaring background work failed. No invented percent complete or estimated finish time.
 
@@ -39,3 +39,7 @@ No new managed service is required. AWS uses the same application/PostgreSQL con
 ## Sources
 
 Accessed 2026-10-19. [Async request-reply](https://learn.microsoft.com/en-us/azure/architecture/patterns/asynchronous-request-reply) supports accepted receipts, status resources and bounded polling. [Django transactions](https://docs.djangoproject.com/en/5.2/topics/db/transactions/) defines atomic writes and post-commit callback limits. [React effect cleanup](https://react.dev/reference/react/useEffect) supports cancellation against stale responses. [History API](https://developer.mozilla.org/en-US/docs/Web/API/History_API/Working_with_the_History_API) defines same-document navigation and Back/Forward handling. Route names, in-app delivery and notification lifetime are this design's choices.
+
+## Observed local evidence
+
+The backend passed 112 tests and migration drift checks; the frontend passed 46 tests and the production build. Real Compose HTTP checks verified two queued jobs, one notification each, a fresh login, idempotent read and cross-owner denial. Chrome checks verified navigation/new work while queued, off-route draft preservation, result links/reload/Back, read persistence, same-job automatic transition and completion while the app tab was closed. Desktop and 390×844 mobile inbox views passed; no horizontal overflow was observed. This establishes the stated local behavior, not live cloud or external notification delivery.

@@ -24,11 +24,11 @@ The Fargate relay reads the RDS outbox and publishes only the job UUID over TLS 
 
 The Fargate worker obtains an RDS lease, checks the GuardDuty result, fetches S3 bytes and verifies size/SHA-256. Pending scan tags defer processing within the ten-minute job deadline without consuming provider-attempt budget. Failed, unsupported or inaccessible scans fail closed. A parser-version cache avoids repeated parsing; explicit reprocessing reads/parses the retained source again.
 
-Only the worker invokes Bedrock Converse through PrivateLink. Bedrock returns proposed quotes; application code checks source/skill evidence, computes coverage and saves one report after verifying the current document and lease in RDS. Delivery and model calls may repeat, but a stale attempt cannot overwrite the committed result.
+Only the worker invokes Bedrock Converse through PrivateLink. Bedrock returns proposed quotes; application code checks source/skill evidence, computes coverage and saves one report and its terminal in-app notification in the same RDS transaction after verifying the current document and lease. Delivery and model calls may repeat, but a stale attempt cannot overwrite the committed result.
 
 ## 7 · Return the outcome and manage the source
 
-React polls the owner-scoped jobs collection through the same HTTPS path. Django returns durable state and any saved report; React renders evidence or a safe failure category. Owners can retrieve a ready original through an authorized attachment response, reuse it, reprocess it, or request document deletion. Expiry and deletion fence access/work before the relay retries S3 cleanup. [Lifecycle policy →](document-lifecycle.md)
+React opens a resumable processing route after acceptance. Background reads use the same HTTPS path for owned job detail and the persisted notification inbox; reviewers can continue working. Only the same processing page auto-opens its result. Elsewhere a saved notification links to the report or failure state, without replacing a draft. This application/RDS path needs no additional AWS notification service. Owners can retrieve a ready original through an authorized attachment response, reuse it, reprocess it, or request document deletion. Expiry and deletion fence access/work before the relay retries S3 cleanup. [Lifecycle policy →](document-lifecycle.md)
 
 ## Supporting responsibilities
 
@@ -41,7 +41,7 @@ React polls the owner-scoped jobs collection through the same HTTPS path. Django
 | Authorization | IAM separates execution, bootstrap, API upload/download, worker read/model, relay delete and scanner integration permissions. |
 | Configuration | Secrets Manager injects startup secrets. Bootstrap alone retrieves the RDS-managed master secret. |
 | Encryption | KMS protects configured objects, database, messaging, images, secrets and logs. S3-mediated permissions are constrained by service and object encryption context. |
-| Operations | CloudWatch receives safe container events and configured metric alarms. Optional existing SNS destinations deliver notifications. |
+| Operations | CloudWatch receives safe container events and configured metric alarms. Optional existing SNS destinations deliver operational alarms; these are separate from the application completion inbox. |
 
 DNS/certificate validation, image publication, secret provisioning, scan-plan readiness and database bootstrap precede normal admission. They are [deployment dependencies](../infra/terraform/README.md), not invented sequential request hops.
 

@@ -36,7 +36,7 @@ sequenceDiagram
     Job->>Job: Validate UUID, claim_job(job_id)
     Job->>DB: BEGIN, lock Job
     alt Missing, not QUEUED, not due, deadline exceeded or attempts exhausted
-        Job->>DB: No claim, fail_job() for deadline/exhaustion when applicable
+        Job->>DB: No claim, deadline/exhaustion uses atomic fail_job() plus one completion notification
         Job-->>Celery: Return without processing
     else Claim accepted
         Job->>DB: RUNNING, attempts + 1, new lease ID + 90-second lease, COMMIT

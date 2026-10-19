@@ -9,10 +9,11 @@ sequenceDiagram
     participant DB as PostgreSQL
     participant Store as SeaweedFS or S3
     User->>React: Submit title, weighted requirements and source
-    React->>React: analyze(): preventDefault, validate size/type and duplicate skills
+    React->>React: analyze(): preventDefault, submit-only pending state, validate size/type and duplicate skills
     React->>React: Build FormData, hash file bytes or exact pasted text, or saved ID + reprocess
     React->>React: Same browser fingerprint reuses UUID, changed payload gets new UUID
     React->>API: api(jobs/, POST, FormData, Idempotency-Key)
+    Note over User,React: Navigation, history and sign out remain available during admission and processing
     API->>Transport: POST /api/jobs/, same-origin cookie and CSRF header
     Note over Transport: nginx body limit -> WSGI -> metadata/security/readiness/session/common/CSRF/auth middleware, URL resolution, CSRF process_view
     Transport->>View: jobs(request) -> admit_jobs(request)
@@ -38,7 +39,7 @@ sequenceDiagram
     alt Existing key with different fingerprint
         View-->>API: 409 conflict, no second admission
     else Existing matching job not UPLOADING, or upload lease still active
-        View-->>API: 202 serialize_job(existing), no new quota charge
+        View-->>API: 202 accepted_job(existing), no new quota charge
     else New job or retryable matching UPLOADING reservation
         opt New job
             View->>DB: consume_bucket(): daily quota, 429 if exhausted
@@ -77,7 +78,18 @@ sequenceDiagram
             Note over View,Store: No new object PUT, relay polls the committed outbox
         end
         View->>View: emit(job.accepted): telemetry only
-        View-->>API: HTTP 202 serialize_job(job)
-        API-->>React: Update job state and start/continue poll()
+        View-->>API: accepted_job(): HTTP 202 job JSON, Location status endpoint, Retry-After 2
     end
+    API-->>React: Receipt with processing_url and result_url when already succeeded
+    React->>React: Check session, deleted entity and navigation fences, merge current receipt
+    alt QUEUED or RUNNING, and user is still on the submitting form
+        React->>React: navigate(/jobs/UUID), release submission pending state
+    else Already SUCCEEDED, and still on submitting form
+        React->>React: navigate(/results/UUID)
+    else UPLOADING reservation
+        React->>React: Explain incomplete upload, retain draft/source and same-key retry
+    else User navigated while admission was in flight
+        React->>React: Preserve current route and draft, receipt remains in history
+    end
+    React->>React: Wake background monitoring without awaiting the worker
     Note over React,DB: After outbox commit, relay/worker may run before browser receives 202, a lost response is safe to retry with the same key

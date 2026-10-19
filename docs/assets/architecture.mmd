@@ -1,4 +1,4 @@
-%% Logical companion; architecture.svg is the self-contained publication layout.
+%% Logical companion; architecture-completion.svg is the self-contained publication layout.
 flowchart TB
   accTitle: Local comparison in seven business steps
   accDescr: SeaweedFS originals, ClamAV, the HTTP provider, PostgreSQL and RabbitMQ run under Compose. Reads overlap background processing. Safe process logs reach OpenObserve.
@@ -12,7 +12,7 @@ flowchart TB
   PARSE -->|"5.4 boto3 Converse"| P["Local HTTP contract provider:8090<br/>Deterministic evidence"]
   P -->|"Proposed quotes"| W
   API -->|"Reuse owned unexpired source; no new PUT"| AD
-  W -->|"Validate; current lease"| D["6 Save · same PostgreSQL<br/>Score + one report + terminal state"]
-  Read["7 Read · React polls /api/jobs/"] -. "Concurrent after receipt" .-> API
-  API -. "Status + optional saved report" .-> Read
+  W -->|"Validate; current lease"| D["6 Save · same PostgreSQL<br/>Score + one report + terminal notice"]
+  Read["7 Read · processing route + durable inbox"] -. "Concurrent after receipt" .-> API
+  API -. "Status + notice + optional saved report" .-> Read
   W -. "API / relay / worker / provider metadata" .-> LOGS["OpenObserve OSS"]

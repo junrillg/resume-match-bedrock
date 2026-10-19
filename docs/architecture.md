@@ -2,7 +2,7 @@
 
 A reviewer uploads or reuses a résumé, requests weighted evidence analysis and receives a report. Object storage preserves the original; PostgreSQL owns identity, lifecycle, dispatch intent and results. The browser reads persisted status while processing runs independently.
 
-![Local seven-step request, dispatch, worker and result flow.](https://raw.githubusercontent.com/junrillg/resume-match-bedrock/4dec8c528107a7c22d4364167a9d9a252a280e5e/docs/assets/architecture.svg)
+![Local seven-step request, dispatch, worker and result flow.](assets/architecture-completion.svg)
 
 The canonical steps are **1 Submit · 2 Accept · 3 Relay · 4 Queue · 5 Process · 6 Save · 7 Read**. Solid arrows carry work; dashed arrows show concurrent reads or diagnostic metadata. [Requirements and decisions](design.md) establish the scope.
 
@@ -26,15 +26,20 @@ Object PUT and database finalization are separate operations. The outbox exists 
 
 The local worker fetches and checksum-checks bytes, then calls ClamAV; AWS checks the GuardDuty clean tag before GET, with a bucket policy enforcing the same gate. The diagram groups that boundary rather than implying identical scanner order. Every comparison verifies the source; matching extraction can avoid parsing again. Explicit reprocessing parses it again.
 
-Provider work occurs outside database locks. Completion locks document then job and rejects deleted/expired source or a stale lease. Delivery/provider calls may repeat; one job/result relationship prevents duplicate committed reports. Worker execution can precede the relay's sent-marker commit. There is no total order across independent processes.
+Provider work occurs outside database locks. Completion locks document then job and rejects deleted/expired source or a stale lease. The terminal transaction saves the outcome and one owner-visible completion notice together; intermediate retries create no notice. Delivery/provider calls may repeat; one job/result relationship prevents duplicate committed reports. Worker execution can precede the relay's sent-marker commit. There is no total order across independent processes.
 
-## 7 · Read and render
+## 7 · Continue work and return to the outcome
 
-![Concurrent owner-scoped polling returns durable state and the saved report to React.](https://raw.githubusercontent.com/junrillg/resume-match-bedrock/d5dbc6e9d22999b50ca3c7737e25b063ce206f74/docs/assets/status-sequence.svg)
+![Durable acceptance leads to a processing route with free navigation. Worker outcome and notification commit together; only the same processing page auto-opens its result.](assets/completion-sequence.svg)
 
-[Diagram source](assets/status-sequence.mmd)
+[Diagram source](assets/completion-sequence.mmd) · [Decision and alternatives](decisions/0008-nonblocking-completion.md)
 
-Polling starts after a one-second delay, with a ten-second request timeout; a fast job may finish between reads. Failed polling pauses updates without changing durable work. Unchanged-input retry retains admission identity; changed input receives a new key. Authentication loss clears private UI state.
+After a finalized receipt, React opens `/jobs/<id>` with navigation available. The reviewer can start another comparison or leave. PostgreSQL saves a completion/failure notification with the terminal outcome. `/notifications` links to `/results/<job-id>` on success or the job's safe failure page. **Mark as read** is a separate, idempotent action; report access never waits for it.
+
+Only the same active processing page advances automatically. Completion elsewhere preserves the current route, draft and focus. Bounded background reads pause while hidden/offline and reconcile on return; a closed browser finds its saved notices on the next visit. This is in-app delivery.
+
+Owner-authorized detail reads support direct result links. Session, navigation and deletion fences reject stale responses. [Timing, routes and operating contract →](implementation-guide.md#browser-state-and-isolation)
+
 
 ## Stored originals and lifecycle
 
@@ -63,7 +68,7 @@ The provider budget is three claims with 2/4-second retry backoff and a ten-minu
 [Diagram source](assets/service-inspection.mmd)
 
 RabbitMQ Management exposes backlog and consumers; Flower consumes task events;
-pgAdmin reads the four application record tables; SeaweedFS admin inspects storage.
+pgAdmin reads the five application record tables; SeaweedFS admin inspects storage.
 OpenObserve correlates API/relay/worker/provider lifecycle events, while `clamdtop`
 shows the scanner's queue and signature state. These surfaces accompany the existing
 seven business steps and do not become part of request completion.

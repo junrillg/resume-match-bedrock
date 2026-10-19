@@ -26,10 +26,10 @@ retaining initialized volumes. No password belongs in a URL or published screens
 
 | Surface | Entry and login | Interpretation / boundary |
 | --- | --- | --- |
-| Application/API | <http://127.0.0.1:8088>, user `lab`; browser Network panel for API calls | Owner-visible document, comparison and report state |
+| Application/API | <http://127.0.0.1:8088>, user `lab`; browser Network panel for API calls | Owner-visible documents, processing/results routes and persisted completion inbox |
 | RabbitMQ Management | <http://127.0.0.1:15672/#/queues>, user `lab_monitor` | Queue `resume.match.quorum`; ready versus unacknowledged messages, consumers and rates. Monitoring role has no queue/exchange configure, read or write permission. |
 | Flower | <http://127.0.0.1:5555/tasks>, user `viewer` | Event-based task lifecycle and worker heartbeat. Read-only UI and event-scoped broker account; no business-queue read/control permission. |
-| pgAdmin | <http://127.0.0.1:5050>, email `lab@example.invalid` | Preconfigured **Resume Match (read only)** connection as `lab_viewer`; SELECT only on `matching_document`, `matching_job`, `matching_outboxevent`, `matching_match`. It can read all owners' rows in those tables, including synthetic source/results; it is an operator account, not application tenancy. |
+| pgAdmin | <http://127.0.0.1:5050>, email `lab@example.invalid` | Preconfigured **Resume Match (read only)** connection as `lab_viewer`; SELECT only on `matching_document`, `matching_job`, `matching_outboxevent`, `matching_match`, `matching_completionnotification`. It can read all owners' rows in those tables, including synthetic source/results; it is an operator account, not application tenancy. |
 | SeaweedFS admin | <http://127.0.0.1:23646/files?path=/buckets/resume-originals>, user `viewer` | Read-only cluster/filer access. Raw/quarantined files can be read or downloaded outside the application's clean-only owner checks; synthetic-only privileged operator boundary. |
 | OpenObserve | <http://127.0.0.1:5080>, email `lab@example.invalid` | Search `resume_match` by request/job/document UUID; service `api`, `relay`, `worker`, `provider` and lifecycle body explain the application outcome. |
 | ClamAV | `docker compose exec scanner clamdtop` | Supported terminal dashboard for daemon queue/memory/signature state; `q` quits. The unauthenticated daemon socket is not published. |
@@ -58,7 +58,7 @@ requirements or guarantees; retain the stated Docker minimum and scanner allowan
 
 Runtime configuration and focused checks passed: 13 long-running services healthy;
 authenticated/unauthenticated access boundaries; RabbitMQ topology mutations denied;
-PostgreSQL SELECT restricted to four matching tables with auth/session reads,
+PostgreSQL SELECT restricted to the then-current four matching tables with auth/session reads,
 business UPDATE and schema CREATE denied even after disabling the session read-only
 default; SeaweedFS authenticated access, delete rejection and private gRPC binding.
 Ten focused checks cover startup/secret preservation, viewer drift and task-exception
@@ -100,8 +100,8 @@ Direct database checks do not close the browser gate.
 
 | Step | Source / receiver | Contract |
 | --- | --- | --- |
-| 1 UI input and submit | [App.tsx: analyze / source controls](https://github.com/junrillg/resume-match-bedrock/blob/d290381664ebe3e62532d6756d5989af472972ca/frontend/src/App.tsx) | Selected original or saved ID, requirements and retry identity |
-| 1 HTTP boundary | [api.ts: api / downloadDocument](https://github.com/junrillg/resume-match-bedrock/blob/d290381664ebe3e62532d6756d5989af472972ca/frontend/src/api.ts) · `frontend/nginx.conf` | Same-origin session/CSRF, UUID Idempotency-Key and bounded request timeout |
+| 1 UI input and submit | [App.tsx: analyze / source controls](https://github.com/junrillg/resume-match-bedrock/blob/880f9b8c820203353593c3eb5905cc13228f950d/frontend/src/App.tsx) | Selected original or saved ID, requirements and retry identity |
+| 1 HTTP boundary | [api.ts: api / downloadDocument](https://github.com/junrillg/resume-match-bedrock/blob/880f9b8c820203353593c3eb5905cc13228f950d/frontend/src/api.ts) · `frontend/nginx.conf` | Same-origin session/CSRF, UUID Idempotency-Key and bounded request timeout |
 | 2 Routing/access | `backend/config/urls.py` · `matching/middleware.py` · `config/settings.py` | Request metadata/body cap, session and CSRF before owner-scoped handlers |
 | 2 Input/reservation | [views.py: read_match_form / admit_jobs](https://github.com/junrillg/resume-match-bedrock/blob/4c8e18a5c544e142a604336c1c47cf415e90818e/backend/matching/views.py) | Owner lock, exact-byte/type fingerprint, quota, upload reservation and finalization |
 | 2 Original PUT | [documents.py: read_source / put_original](https://github.com/junrillg/resume-match-bedrock/blob/4c8e18a5c544e142a604336c1c47cf415e90818e/backend/matching/documents.py#L54) | Generated key, bounded bytes, Content-MD5, successful PUT acknowledgment; no unclean HEAD bypass |
@@ -109,7 +109,8 @@ Direct database checks do not close the browser gate.
 | 5 Claim/source | [jobs.py: claim_job / run_job](https://github.com/junrillg/resume-match-bedrock/blob/4c8e18a5c544e142a604336c1c47cf415e90818e/backend/matching/jobs.py) · [documents.py: document_text / get_original / cloud_scan / scan_bytes](https://github.com/junrillg/resume-match-bedrock/blob/4c8e18a5c544e142a604336c1c47cf415e90818e/backend/matching/documents.py#L146) | Lease → owned/unexpired source → checksum/safety gate → parse or matching cache |
 | 5 Evidence | [services.py: extract_evidence / bedrock_request](https://github.com/junrillg/resume-match-bedrock/blob/4c8e18a5c544e142a604336c1c47cf415e90818e/backend/matching/services.py) · `backend/local_converse.py` | Source/skills to Converse, proposed evidence back; schema/quote validation remains application-owned |
 | 6 Result | [jobs.py: finish_job](https://github.com/junrillg/resume-match-bedrock/blob/4c8e18a5c544e142a604336c1c47cf415e90818e/backend/matching/jobs.py) · `models.py: Match` | Document then job locks, live lease, deterministic score and one report |
-| 7 Poll/render | [App.tsx: polling / MatchResult](https://github.com/junrillg/resume-match-bedrock/blob/d290381664ebe3e62532d6756d5989af472972ca/frontend/src/App.tsx) · `views.py: jobs / serialize_job` | Owner collection with nested report; terminal/error handling |
+| 6 Terminal notice | [notifications.py: persist_completion](https://github.com/junrillg/resume-match-bedrock/blob/880f9b8c820203353593c3eb5905cc13228f950d/backend/matching/notifications.py#L14) · `jobs.py: finish_job / fail_job` | Unique job notice inside outcome transaction, cascade on deletion |
+| 7 Processing/inbox/result | [App.tsx: navigate / poll / markRead / MatchResult](https://github.com/junrillg/resume-match-bedrock/blob/880f9b8c820203353593c3eb5905cc13228f950d/frontend/src/App.tsx) · [views.py: notifications / notification_read / job_detail](https://github.com/junrillg/resume-match-bedrock/blob/880f9b8c820203353593c3eb5905cc13228f950d/backend/matching/views.py#L188) | Owned detail + durable inbox; free navigation, no off-route redirect |
 | Source operations | `views.py: documents / document_download / document_detail` · `documents.py: tombstone / reconcile_documents` | List, clean attachment retrieval, immediate access fencing and retried cleanup |
 | Diagnostics | [telemetry.py: emit](https://github.com/junrillg/resume-match-bedrock/blob/4c8e18a5c544e142a604336c1c47cf415e90818e/backend/matching/telemetry.py) | Fixed event body and allowlisted safe attributes |
 
@@ -133,19 +134,21 @@ New uploads reserve document/job identity before PUT, then finalize the document
 | --- | --- |
 | `POST /api/jobs/` | Multipart original or saved `document_id`, requirements, UUID key; saved IDs may use `reprocess=true`; 202 with job/document state |
 | `GET /api/jobs/` | Owner's latest 100 jobs, document identity and optional saved report |
+| `GET /api/notifications/?offset=0` | Owner-scoped pages of 100 terminal notices, total unread count and next offset |
+| `POST /api/notifications/<id>/read/` | Owner-scoped CSRF-protected idempotent read receipt; opening a report is separate |
 | `GET /api/jobs/<id>/` | Owned state/attempts/safe error/report |
 | `DELETE /api/jobs/<id>/` | Delete comparison/result; established reusable source remains |
 | `GET /api/documents/` | Owner's latest 100 unexpired documents and lifecycle metadata |
 | `GET /api/documents/<id>/download/` | Ready, owned, unexpired and safety-verified bytes as no-store attachment |
 | `DELETE /api/documents/<id>/` | 202 tombstone; remove access/results immediately, retry object cleanup |
 
-A `202 uploading` concurrent replay confirms only a reservation: no outbox exists and storage may be incomplete. Retry the same original/key after interruption; a poll alone cannot resupply missing bytes. A new upload's finalized `202 queued` confirms successful PUT and committed dispatch intent. States include uploading, queued, running, succeeded and failed; 202 never promises a completed result. Cancelling an unfinished initial upload leads to cleanup rather than retaining an unready orphan.
+A `202 uploading` concurrent replay confirms only a reservation: no outbox exists and storage may be incomplete. Retry the same original/key after interruption; a poll alone cannot resupply missing bytes. A new upload's finalized `202 queued` confirms successful PUT and committed dispatch intent. States include uploading, queued, running, succeeded and failed; 202 never promises a completed result. Accepted responses include `Location: /api/jobs/<id>/` and `Retry-After: 2`; JSON supplies local processing/result destinations. Cancelling an unfinished initial upload leads to cleanup rather than retaining an unready orphan.
 
-Authentication, CSRF, owner and body/type limits apply throughout. Safe rejection statuses include 400 validation, 401 authentication, 403 CSRF, 404 unavailable/other-owner resource, 409 conflicting input or safety rejection, 413 body cap, 429 quota and 503 unavailable admission/storage/safety verification. Failed GET/polling pauses UI updates without failing the job.
+Authentication, CSRF, owner and body/type limits apply throughout. Safe rejection statuses include 400 validation, 401 authentication, 403 CSRF, 404 unavailable/other-owner resource, 409 conflicting input or safety rejection, 413 body cap, 429 quota and 503 unavailable admission/storage/safety verification. Failed status reads do not fail durable work; the monitor retries with capped backoff and reconciles on return.
 
 ## Delivery, processing and recovery
 
-PostgreSQL owns jobs, outbox, leases and results. The relay publishes UUID-only persistent wakeups to `resume.match.quorum` and marks dispatch sent after broker confirmation. Redelivery is expected. Three provider claims, a ten-minute job deadline, 90-second leases and bounded retry backoff prevent endless work; lease-fenced completion permits one committed result. The pending cloud scan path requeues without consuming provider attempts, still bounded by the job deadline.
+PostgreSQL owns jobs, outbox, leases, results and completion notifications. The relay publishes UUID-only persistent wakeups to `resume.match.quorum` and marks dispatch sent after broker confirmation. Redelivery is expected. Three provider claims, a ten-minute job deadline, 90-second leases and bounded retry backoff prevent endless work; lease-fenced completion permits one committed result. The pending cloud scan path requeues without consuming provider attempts, still bounded by the job deadline.
 
 `reconcile_documents` expires abandoned one-hour uploads, tombstones policy-expired sources, retries object deletion and clears derived state. Late upload completion restores deletion intent; document-first completion locks prevent deleted/expired work from recreating results. Cleanup tombstones remain seven days before removal. Legacy source-cleared records remain readable with source unavailable and receive finite cleanup policy.
 
@@ -158,13 +161,25 @@ Stop only this Compose project's `worker` or `broker`, submit synthetic work, re
 
 ## Browser state and isolation
 
-The UI sends only the selected source, polls one request at a time and clears private state on logout/authentication loss. Unchanged input retains its retry key after ambiguity; changed input gets a new key. Owner source selection, authorized download, reprocess and document-delete actions share the backend lifecycle contract. Download is an attachment; it does not expose public objects or signed URLs. Deleting a document removes related comparisons; deleting an established comparison keeps its source.
+| Route | Responsibility |
+| --- | --- |
+| `/` | New comparison; the draft/file stays mounted across in-app navigation |
+| `/jobs/<job-id>` | Independently authorized processing or safe terminal failure |
+| `/results/<job-id>` | Saved report; reload resolves job detail outside recent history |
+| `/notifications` | Durable completion inbox, separate Mark as read and older pages |
+| `/reports/<match-id>` | Earlier reports resolved from available recent history; legacy detail GET is unsupported |
 
-The document-aware UI passed 29 focused frontend tests and the production build. Checks cover saved-source/reprocess request identity, uploading-state recovery, source deletion, download safety/authentication failures, polling and stale-response isolation.
+Native History API navigation uses validated UUID paths and normal links/Back. A returned admission cannot redirect after navigation. Only the same still-active processing route advances on success; unrelated drafts survive background completion. Action-specific pending state leaves navigation and sign-out available. Form drafts are memory-only and are cleared on reload or authentication loss.
+
+The monitor makes one nonoverlapping batch: jobs, reports, documents, first inbox page and current job detail when relevant. Active work uses one-second checks; idle catch-up uses 15 seconds. Errors back off up to 30 seconds; hidden/offline tabs pause, with immediate return/reconnect reconciliation. Older inbox pages refresh on return/deletion. Individual HTTP requests time out after ten seconds. Transport failure never changes the saved job outcome.
+
+Notifications share the original/job lifetime and cascade on deletion; a OneToOne job relation prevents duplicate terminal notices. No historical unread notices are backfilled. Server owner checks and CSRF protect reads/mutations. Session epochs, route revisions and explicit deletion fences prevent late responses restoring removed data or changing another route/source. An unrelated read acknowledgement cannot cancel a valid original download.
+
+The current UI passed **46 frontend tests** and the production build. A real paused-worker browser run verified continuing work, another submission, off-route completion without draft replacement, same-job result transition, result refresh/Back, read persistence and completion while the app tab was closed. Desktop/mobile 390×844 views passed without horizontal overflow. The completion inbox is in-app; external email/push is not implemented.
 
 ## Correlated operational logs
 
-`telemetry.emit` uses an event name as the OTLP **body**, with UUID request/job/document IDs and allowlisted service, stage, status, attempt, duration and safe error category. OpenObserve stores that name in `body`; stdout JSON uses `event`. Application logs exclude résumé content, quotes, prompts, filenames, object keys, signed URLs, usernames, credentials and raw exceptions. Telemetry export is bounded/background and cannot decide business success.
+`telemetry.emit` uses an event name as the OTLP **body**, with UUID request/job/document/notification IDs and allowlisted service, stage, status, attempt, duration and safe error category. OpenObserve stores that name in `body`; stdout JSON uses `event`. Application logs exclude résumé content, quotes, prompts, filenames, object keys, signed URLs, usernames, credentials and raw exceptions. Telemetry export is bounded/background and cannot decide business success.
 
 ### Search one job across services
 
@@ -176,7 +191,7 @@ WHERE request_id = 'PASTE_REQUEST_UUID'
 ORDER BY _timestamp ASC
 ```
 
-Alternatively filter by `job_id = 'PASTE_JOB_UUID'`. The admission request ID connects API, relay, worker and provider; a poll's X-Request-ID belongs to that separate GET. Look at the `body` column for lifecycle names. Verified records included `job.accepted`, `job.published`, `job.started`, `document.ready`, `provider.requested`, `provider.completed`, `provider.responded` and `job.succeeded` across four services. Arrival order can differ and export can lose events. PostgreSQL remains the business ledger.
+Alternatively filter by `job_id = 'PASTE_JOB_UUID'`. The admission request ID connects API, relay, worker and provider; a poll's X-Request-ID belongs to that separate GET. Look at the `body` column for lifecycle names. Verified records included `job.accepted`, `job.published`, `job.started`, `document.ready`, `provider.requested`, `provider.completed`, `provider.responded` and `job.succeeded` across four services. Arrival order can differ and export can lose events. PostgreSQL remains the business ledger. `notification.persisted` uses the admission request ID; `notification.read` has its own HTTP request ID. Join those events using `job_id` and `notification_id`; best-effort logs are not the notification store.
 
 <details>
 <summary>Document events and telemetry limits</summary>
@@ -238,3 +253,13 @@ before the remaining UI/logging implementation; it has not been backdated.
 | Document-aware UI | [d290381](https://github.com/junrillg/resume-match-bedrock/commit/d290381664ebe3e62532d6756d5989af472972ca) |
 | Connected inspection design | [f60d186](https://github.com/junrillg/resume-match-bedrock/commit/f60d186) |
 | Connected read-only service viewers | [17ba0eb](https://github.com/junrillg/resume-match-bedrock/commit/17ba0ebb14af3852a2c2682f48d0c2e993a42bba) |
+
+## Completion delivery verification · 2026-10-19
+
+Backend: **112 PostgreSQL tests**, migration applied/no drift, and the new notification table admitted to the existing read-only viewer role. Real HTTP verification observed two queued jobs completing with one persisted notice each, fresh-login recovery, idempotent acknowledgement, cross-owner 404s and correlated API/relay/worker/notice events. All probe data used separate synthetic owners and was cleaned up. Existing local services and volumes were preserved.
+
+| Completion milestone | Actual commit |
+| --- | --- |
+| Researched resumable processing decision | [f32a054](https://github.com/junrillg/resume-match-bedrock/commit/f32a054) |
+| Durable inbox and owner APIs | [362a909](https://github.com/junrillg/resume-match-bedrock/commit/362a909) |
+| Nonblocking processing, inbox and result routes | [880f9b8](https://github.com/junrillg/resume-match-bedrock/commit/880f9b8) |

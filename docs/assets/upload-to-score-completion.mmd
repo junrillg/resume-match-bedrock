@@ -1,0 +1,52 @@
+sequenceDiagram
+    autonumber
+    actor User
+    participant React as React App and navigation helpers
+    participant View as Django job and notification views
+    participant Worker as Worker or recovery outcome writer
+    participant DB as PostgreSQL
+    View-->>React: Finalized admission: HTTP 202 with Job UUID
+    React->>React: navigate(/jobs/UUID), submission no longer pending
+    opt User chooses to leave processing
+        User->>React: Continue elsewhere, prepare another draft or sign out
+    end
+    Note over User,React: Draft remains mounted across routes, worker progress never locks the workspace
+    par Terminal outcome commits independently
+        Worker->>DB: BEGIN, current lease, deadline and document lifecycle guards
+        alt Success
+            Worker->>DB: Match plus Job SUCCEEDED
+        else Terminal failure or recovery exhaustion
+            Worker->>DB: Job FAILED with safe error code, no Match
+        end
+        Worker->>DB: persist_completion(): unique notification per Job
+        Worker->>DB: COMMIT outcome and notification together
+        Worker->>Worker: on_commit telemetry only, UUID correlation
+    and Connected browser discovers saved state
+        loop Visible and online, active 1s or idle 15s
+            React->>View: GET notifications/?offset=0 and workspace status, selected job detail when applicable
+            View->>DB: visible_notifications(owner), lifecycle filter, newest 100, total unread_count
+            DB-->>View: Persisted inbox and status
+            View-->>React: Notification IDs, outcome, timestamps, local destination, no source/evidence
+            alt Same visible processing Job is now succeeded with a Match
+                React->>React: Replace /jobs/UUID with /results/UUID
+            else User is elsewhere
+                React->>React: Show unread summary, retain current route, focus and draft
+            end
+        end
+    end
+    Note over React,DB: Closed or signed-out browser gets persisted notices after returning and authenticating, no email or push channel is implied
+    User->>React: Open notification result or failure-status link
+    React->>React: navigate() using local UUID-derived resultPath() or jobPath()
+    React->>View: GET /api/jobs/UUID/ independently of recent history
+    View->>DB: Owner and document lifecycle check
+    View-->>React: Authoritative Job and Match, or unavailable response
+    React->>React: Render MatchResult on result route, or processing/failure status
+    opt User separately chooses Mark as read
+        React->>View: POST /api/notifications/UUID/read/ with CSRF
+        View->>DB: Lock visible owned notification, set read_at only if NULL
+        DB-->>View: Same persisted timestamp on repeat acknowledgement
+        View-->>React: Updated notification, on_commit emits notification.read
+        React->>React: Update unread count and refresh, acknowledgement failure cannot block report access
+    end
+    Note over React,View: Background failures retry with bounded backoff, focus/reconnect catches up. Authentication loss clears private client state
+    Note over View,DB: Job/source deletion cascades notices, expiry hides notices before cleanup. Existing historical terminal jobs are not backfilled as unread
