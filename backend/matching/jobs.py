@@ -15,6 +15,7 @@ from .models import Document, Job, Match, OutboxEvent
 from .services import ProviderError, TransientProviderError, calculate_score, extract_evidence
 from .telemetry import emit
 from .documents import document_text, reconcile_documents, DocumentUnavailable, ScanPending
+from .notifications import persist_completion
 
 
 def job_event(event, job, stage, **extra):
@@ -30,6 +31,7 @@ def fail_job(job, code, stage="worker", duration_ms=0):
     job.lease_id = None
     job.lease_expires_at = None
     job.save()
+    persist_completion(job, stage)
     job_event("job.failed", job, stage, duration_ms=duration_ms)
 
 
@@ -87,6 +89,7 @@ def finish_job(claim, evidence=None, error_code=None, transient=False, duration_
             job.lease_id = None
             job.lease_expires_at = None
             job.save()
+            persist_completion(job, "worker")
         if job.status != Job.Status.FAILED:
             job_event("job.retry" if job.status == Job.Status.QUEUED else "job.succeeded", job, "worker", duration_ms=duration_ms, error_code=error_code)
         return True

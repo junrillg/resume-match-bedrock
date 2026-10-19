@@ -74,6 +74,19 @@ class OutboxEvent(models.Model):
         indexes = [models.Index(fields=["sent_at", "available_at"])]
 
 
+class CompletionNotification(models.Model):
+    """Durable inbox receipt, committed with the terminal job outcome."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    job = models.OneToOneField(Job, on_delete=models.CASCADE, related_name="completion_notification")
+    status = models.CharField(max_length=12, choices=[(Job.Status.SUCCEEDED, "Succeeded"), (Job.Status.FAILED, "Failed")])
+    created_at = models.DateTimeField(auto_now_add=True)
+    read_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+        constraints = [models.CheckConstraint(condition=models.Q(status__in=["succeeded", "failed"]), name="notification_terminal_status")]
+
+
 class Document(models.Model):
     class Status(models.TextChoices):
         UPLOADING = "uploading"

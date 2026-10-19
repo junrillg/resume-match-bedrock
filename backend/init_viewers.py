@@ -13,7 +13,7 @@ from urllib.parse import quote
 
 EVENT_READ = r"^(celeryev|flower\..*|.*\.reply\.flower\.pidbox)$"
 EVENT_WRITE = r"^(flower\..*|.*\.reply\.flower\.pidbox)$"
-TABLES = ("matching_job", "matching_match", "matching_document", "matching_outboxevent")
+TABLES = ("matching_job", "matching_match", "matching_document", "matching_outboxevent", "matching_completionnotification")
 
 
 def rabbit_request(path, *, method="GET", body=None, username="lab", password=None):

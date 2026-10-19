@@ -17,6 +17,7 @@ from .models import Document, Job, Match, OutboxEvent, RateBucket
 from .services import InvalidInput, read_requirements, read_resume
 from .telemetry import emit
 from .documents import read_source, put_original, get_original, tombstone, DocumentError, DocumentUnavailable
+from .notifications import serialize_notification, visible_notifications
 import io
 from django.db.models import Q
 
@@ -172,7 +173,50 @@ def serialize_job(job):
     return {"id": str(job.id), "job_title": job.job_title, "status": job.status,
             "attempts": job.attempts, "created_at": job.created_at.isoformat(),
             "request_id": str(job.request_id), "error_code": job.error_code or None, "match": match,
-            "document": serialize_document(document) if document and document.status != Document.Status.DELETED else None}
+            "document": serialize_document(document) if document and document.status != Document.Status.DELETED else None,
+            "processing_url": f"/jobs/{job.id}",
+            "result_url": f"/results/{job.id}" if job.status == Job.Status.SUCCEEDED else None}
+
+
+def accepted_job(job):
+    response = JsonResponse(serialize_job(job), status=202)
+    response["Location"] = f"/api/jobs/{job.id}/"
+    response["Retry-After"] = "2"
+    return response
+
+
+def notifications(request):
+    if not request.user.is_authenticated:
+        return error(request, "Sign in to continue.", 401)
+    if request.method != "GET":
+        return error(request, "Method not allowed.", 405)
+    raw_offset = request.GET.get("offset", "0")
+    if len(raw_offset) > 6 or not raw_offset.isascii() or not raw_offset.isdecimal() or int(raw_offset) > 100000:
+        return error(request, "Provide an offset from 0 to 100000.", 400)
+    offset = int(raw_offset)
+    records = visible_notifications(request.user)
+    page = list(records[offset:offset + 101])
+    return JsonResponse({"notifications": [serialize_notification(item) for item in page[:100]],
+                         "unread_count": records.filter(read_at__isnull=True).count(),
+                         "next_offset": offset + 100 if len(page) > 100 else None})
+
+
+def notification_read(request, notification_id):
+    if not request.user.is_authenticated:
+        return error(request, "Sign in to continue.", 401)
+    if request.method != "POST":
+        return error(request, "Method not allowed.", 405)
+    with transaction.atomic():
+        notification = visible_notifications(request.user).select_for_update(of=("self",)).filter(pk=notification_id).first()
+        if notification is None:
+            return error(request, "Not found.", 404)
+        if notification.read_at is None:
+            notification.read_at = timezone.now()
+            notification.save(update_fields=["read_at"])
+            transaction.on_commit(lambda: emit("notification.read", notification_id=notification.id,
+                                              job_id=notification.job_id, request_id=request.request_id,
+                                              stage="api", status=notification.status))
+        return JsonResponse(serialize_notification(notification))
 
 
 def jobs(request):
@@ -217,15 +261,15 @@ def admit_jobs(request):
             job = existing
             document = job.document
             if job.status != Job.Status.UPLOADING:
-                return JsonResponse(serialize_job(job), status=202)
+                return accepted_job(job)
             document = Document.objects.select_for_update().get(pk=document.pk)
             job = Job.objects.select_for_update(of=("self",)).select_related("match", "document").get(pk=job.pk)
             if job.status != Job.Status.UPLOADING:
-                return JsonResponse(serialize_job(job), status=202)
+                return accepted_job(job)
             if document.status != Document.Status.UPLOADING or document.upload_deadline <= now:
                 return error(request, "Upload reservation is no longer available.", 409)
             if document.upload_lease_until and document.upload_lease_until > now:
-                return JsonResponse(serialize_job(job), status=202)
+                return accepted_job(job)
         else:
             if not consume_bucket(f"match:{request.user.pk}:{now.date()}", settings.MATCH_DAILY_LIMIT, now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)):
                 return error(request, "Daily matching limit reached. Try again tomorrow (UTC).", 429)
@@ -269,7 +313,7 @@ def admit_jobs(request):
                 return error(request, "Comparison was deleted during upload.", 409)
             if current.status != Document.Status.UPLOADING or current.upload_lease != lease:
                 job.document = current
-                return JsonResponse(serialize_job(job), status=202)
+                return accepted_job(job)
             current.status = Document.Status.PENDING
             current.upload_lease = None
             current.upload_lease_until = None
@@ -283,7 +327,7 @@ def admit_jobs(request):
             OutboxEvent.objects.create(job=job, available_at=now)
             job.document = current
     emit("job.accepted", request_id=job.request_id, job_id=job.id, document_id=job.document_id, stage="api", status="queued", attempt=0)
-    return JsonResponse(serialize_job(job), status=202)
+    return accepted_job(job)
 
 
 def documents(request):

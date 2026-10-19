@@ -2,10 +2,23 @@
 import unittest
 from unittest.mock import MagicMock, patch
 
-from init_viewers import provision_postgres, provision_rabbit
+from init_viewers import TABLES, provision_postgres, provision_rabbit
 
 
 class ViewerAccountBoundaryTests(unittest.TestCase):
+    @patch.dict("os.environ", {"POSTGRES_DB": "synthetic", "POSTGRES_USER": "synthetic",
+                              "POSTGRES_PASSWORD": "synthetic", "POSTGRES_VIEWER_PASSWORD": "synthetic"})
+    @patch("init_viewers.psycopg.connect")
+    def test_existing_readonly_role_gets_completion_table_select_and_read_verification(self, connect):
+        admin, viewer = MagicMock(), MagicMock()
+        connect.return_value.__enter__.side_effect = [admin, viewer]
+        admin.execute.return_value.fetchone.side_effect = [(False, False, False, False, True, False, False), (False,), (False,)]
+        provision_postgres()
+        self.assertIn("matching_completionnotification", TABLES)
+        grants = [call.args[0].as_string() for call in admin.execute.call_args_list if hasattr(call.args[0], "as_string")]
+        self.assertIn('GRANT SELECT ON "public"."matching_job", "public"."matching_match", "public"."matching_document", "public"."matching_outboxevent", "public"."matching_completionnotification" TO lab_viewer', grants)
+        self.assertEqual(viewer.execute.call_count, len(TABLES))
+
     @patch("init_viewers.rabbit_request")
     def test_existing_privileged_rabbit_user_is_preserved_and_refused(self, request):
         request.side_effect = [{"status": "ready"}, {"tags": ["administrator"]}]

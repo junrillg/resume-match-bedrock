@@ -13,6 +13,8 @@ urlpatterns = [
     path("api/documents/<uuid:document_id>/download/", views.document_download),
     path("api/jobs/", views.jobs),
     path("api/jobs/<uuid:job_id>/", views.job_detail),
+    path("api/notifications/", views.notifications),
+    path("api/notifications/<uuid:notification_id>/read/", views.notification_read),
 ]
 handler404 = "matching.views.not_found"
 handler500 = "matching.views.server_error"
