@@ -1,0 +1,17 @@
+%% Logical companion to the native SVG; generated from the same service/edge definitions.
+flowchart TB
+  accTitle: From committed state to browser
+  accDescr: The same transaction persists visible state and an owner revision. Event-relay publishes owner wakes to a fixed Valkey shard. A bounded raw ASGI gateway subscribes before replay and sends SSE. React reads affected state through the owner-scoped API; resets and reconnect snapshots recover state.
+  Persist["7a  Persist<br/>PostgreSQL: revision + StreamEvent<br/>Same transaction as visible changes<br/>Indexed durable intent; owner-scoped order"]
+  Publish["7b  Publish wake<br/>Event-relay: bounded SKIP LOCKED batches<br/>Publish owner wake, then mark published<br/>Retry from the ledger after interruption"]
+  Gateway["7c  Deliver change<br/>Raw ASGI gateway replicas<br/>Subscribe ACK → indexed SQL replay<br/>Bounded DB work; no heartbeat SQL"]
+  Shards["Fixed Valkey shards<br/>owner_id % shard_count; same ordered map<br/>Shared subscriptions; coalesced wake queues<br/>Missed wake → replay from PostgreSQL"]
+  React["React browser<br/>EventSource receives revision + kind + IDs<br/>Coalesce affected job/document/inbox reads<br/>Render saved state and completion notifications"]
+  API["7d  Read affected state<br/>Targeted owner-scoped Django GET<br/>Saved job/report, document metadata or inbox<br/>SSE gateway never mutates application records"]
+  Persist --> Publish
+  Publish -.->|"Owner-channel wake"| Shards
+  Shards -.->|"Wake"| Gateway
+  Persist -->|"Replay by revision"| Gateway
+  Gateway -->|"SSE: change / ready / reset"| React
+  React -->|"GET"| API
+  API -->|"Saved state"| React

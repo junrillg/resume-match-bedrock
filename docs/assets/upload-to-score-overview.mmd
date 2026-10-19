@@ -1,61 +1,15 @@
 flowchart TB
-    B["1. React App.analyze(): validate input, FormData, fingerprint and UUID"]
-    H["2. api(): POST /api/jobs/ with CSRF, session cookie and Idempotency-Key"]
-    N["3. nginx /api/ proxy -> Gunicorn config.wsgi -> Django middleware and URL routing"]
-    V["4. jobs() -> admit_jobs() -> read_match_form() -> read_requirements() / read_source()"]
-    A["5. Transaction A: owner lock, deduplication, quota and reservation"]
-    NEW{"New original bytes?"}
-    PUT["6. put_original() -> client().put_object(): original PDF, TXT or pasted UTF-8"]
-    STORE[("Object storage: local SeaweedFS or AWS S3")]
-    FINAL["7. Transaction B: document lock then job lock; PENDING document + QUEUED job + OutboxEvent"]
-    SAVED["Saved source: ownership/status/expiry check; QUEUED job + OutboxEvent in Transaction A"]
-    DB[("PostgreSQL: Document, Job, OutboxEvent, Match, CompletionNotification, RateBucket")]
-    RESP["accepted_job() -> HTTP 202, Location and Retry-After; job.accepted is telemetry"]
-    RELAY["8. relay_jobs.Command.handle() -> relay_once(): reconcile_documents(), recover_jobs(), due unsent outbox"]
-    PUB["9. publish_job(): send_task(matching.process_job), application args = Job UUID"]
-    MQ[("RabbitMQ durable direct exchange and quorum queue resume.match.quorum")]
-    C["10. Celery process_job() -> run_job() -> claim_job(): DB lease"]
-    DT["11. document_text() -> get_original(): retrieve, verify bytes and safety-check"]
-    SCAN["GuardDuty tags before GET, or local ClamAV after GET"]
-    PARSE["12. Valid parser cache or read_resume(): strict TXT/PDF parsing; mark document READY"]
-    EV["13. extract_evidence(): demo literal_evidence() / literal_match(), or Bedrock Converse"]
-    PROVIDER["bedrock_request() + correlation_ids() -> boto3.converse(); local ConverseHandler or AWS Bedrock"]
-    VAL["14. validate_evidence(): original skills/weights, exact quotes and skill boundaries"]
-    FIN["15. finish_job(): document/job locks, lease/deadline/lifecycle guards; calculate_score(); Match + SUCCEEDED + unique completion notification atomically"]
-    ROUTE["Processing page /jobs/UUID; user can navigate, submit another comparison or sign out"]
-    POLL["16. Background status and inbox reads; bounded retries, visibility pause and reconnect catch-up"]
-    NOTICE["17. Persistent inbox: explicit result or failure link; separate Mark as read"]
-    RESULT["Result page /results/UUID -> owner-scoped job detail -> MatchResult"]
-    REC["Failure/recovery: enqueue_again(), fail_job(), recover_jobs(); stale deliveries cannot commit"]
-    LIFE["Reuse, download and deletion: document_download(), tombstone(), reconcile_documents()"]
-    B --> H --> N --> V --> A --> NEW
-    A <--> DB
-    NEW -->|Yes| PUT
-    PUT --> STORE
-    PUT --> FINAL
-    FINAL <--> DB
-    NEW -->|No: document_id| SAVED
-    SAVED <--> DB
-    FINAL --> RESP
-    SAVED --> RESP
-    DB --> RELAY --> PUB --> MQ --> C
-    MQ -. publisher confirmation, not completion .-> PUB
-    PUB -. mark sent_at after confirmation .-> DB
-    C <--> DB
-    C --> DT
-    STORE --> DT
-    SCAN --> DT
-    DT --> PARSE --> EV
-    EV --> PROVIDER --> VAL
-    EV -->|Demo branch| VAL
-    VAL --> FIN
-    FIN <--> DB
-    RESP --> ROUTE --> POLL
-    POLL <--> DB
-    POLL --> NOTICE
-    POLL -->|Same visible processing job succeeds| RESULT
-    NOTICE -->|User opens ready report| RESULT
-    C --> REC
-    REC --> DB
-    DB --> LIFE
-    LIFE --> STORE
+  accTitle: User action to saved score and visible completion
+  accDescr: Seven business steps connect original storage, reliable processing and durable event delivery. SSE changes trigger authorized reads, not an embedded result payload.
+  UI[1 React analyze handler + API client] --> API[2 Django owner / CSRF / retry / supply checks]
+  API --> S[Private original PUT; release DB for I/O]
+  S --> DB[Atomic queued job + outbox + revision]
+  API -->|Saved document reuse| DB
+  DB --> R[3 Productive confirmed relay]
+  R --> Q[4 RabbitMQ UUID]
+  Q --> W[5 Leased worker: original / safety / parser / Converse]
+  W --> SAVE[6 Owner-stream / document / job fence; report + notice + event]
+  SAVE --> ER[7a–b Durable event relay → ordered Valkey shard]
+  ER --> G[7c Raw ASGI gateway → SSE identifiers]
+  G --> GET[7d React targeted authorized REST reads]
+  GET --> RESULT[Same processing route → result; other routes → inbox]

@@ -1,5 +1,9 @@
 flowchart TB
-  A[Owner delete or expiry] --> B[Lock document; tombstone access]
+  accTitle: Source deletion and cleanup
+  accDescr: Owner-stream and document locks fence access and related work before retried physical deletion and eventual tombstone removal.
+  accTitle: Source deletion and cleanup
+  accDescr: Owner-stream and document locks fence access and related work before retried physical deletion and eventual tombstone removal.
+  A[Owner delete or expiry] --> B[Lock owner stream → document; tombstone access]
   B --> C[Remove derived content; fence related jobs]
   C --> D[Relay retries object DELETE]
   D -->|Failure| D

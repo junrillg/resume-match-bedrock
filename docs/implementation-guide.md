@@ -4,7 +4,7 @@ Use this reference for source, API and operating contracts. The [architecture](a
 
 ## Runtime and entry point
 
-`./scripts/lab up` builds and starts React/nginx, Django, PostgreSQL, persistent SeaweedFS S3 storage, ClamAV, the relay, RabbitMQ, Celery worker, HTTP Converse provider, OpenObserve, Flower, pgAdmin and SeaweedFS admin. Initialization creates private local storage identities/bucket and applies migrations before admission. `./scripts/lab down` stops the project while retaining its database, object, scanner-definition, broker and viewer volumes.
+`./scripts/lab up` builds and starts React/nginx, Django, PostgreSQL, persistent SeaweedFS S3 storage, ClamAV, the job relay, event relay, two Valkey shards, two raw ASGI gateways, RabbitMQ, Celery worker, HTTP Converse provider, OpenObserve, Flower, pgAdmin and SeaweedFS admin. Initialization creates private local storage identities/bucket and applies migrations before admission. `./scripts/lab down` stops the project while retaining its database, object, scanner-definition, broker and viewer volumes.
 
 | Artifact | Responsibility |
 | --- | --- |
@@ -12,7 +12,7 @@ Use this reference for source, API and operating contracts. The [architecture](a
 | [`storage/start.sh`](../storage/start.sh) / [`backend/init_storage.py`](../backend/init_storage.py) | Private S3-compatible identities, storage startup and bucket initialization |
 | [`backend/init_viewers.py`](../backend/init_viewers.py) / [`viewing/`](../viewing/) | Dedicated inspection roles, private connection files and read-only viewer configuration |
 | [`backend/Dockerfile`](../backend/Dockerfile) / [`frontend/Dockerfile`](../frontend/Dockerfile) | Pinned application build/runtime |
-| [`frontend/nginx.conf`](../frontend/nginx.conf) | Same-origin API proxy; Docker DNS locally, task-local upstream on ECS |
+| [`frontend/nginx.conf`](../frontend/nginx.conf) | Same-origin API and unbuffered stream proxy locally; exact ALB stream routing on ECS |
 | [`infra/terraform/`](../infra/terraform/README.md) | Separate AWS resources and reviewed release/bootstrap process |
 
 The app is <http://127.0.0.1:8088>; OpenObserve is <http://127.0.0.1:5080>. Run `./scripts/lab credentials` in a private terminal. Ignored owner-only `.env` stores generated local credentials; preserve it with initialized volumes. Local HTTP/debug and single-node services must remain restricted to synthetic data. Native object, database, scanner and AMQP ports stay inside Compose; authenticated HTTP viewers are separate loopback endpoints. Allow at least 8 GiB for Docker; the private scanner reserves 4 GiB, needs initial definition downloads and uses AMD64 emulation on ARM64.
@@ -29,9 +29,10 @@ retaining initialized volumes. No password belongs in a URL or published screens
 | Application/API | <http://127.0.0.1:8088>, user `lab`; browser Network panel for API calls | Owner-visible documents, processing/results routes and persisted completion inbox |
 | RabbitMQ Management | <http://127.0.0.1:15672/#/queues>, user `lab_monitor` | Queue `resume.match.quorum`; ready versus unacknowledged messages, consumers and rates. Monitoring role has no queue/exchange configure, read or write permission. |
 | Flower | <http://127.0.0.1:5555/tasks>, user `viewer` | Event-based task lifecycle and worker heartbeat. Read-only UI and event-scoped broker account; no business-queue read/control permission. |
-| pgAdmin | <http://127.0.0.1:5050>, email `lab@example.invalid` | Preconfigured **Resume Match (read only)** connection as `lab_viewer`; SELECT only on `matching_document`, `matching_job`, `matching_outboxevent`, `matching_match`, `matching_completionnotification`. It can read all owners' rows in those tables, including synthetic source/results; it is an operator account, not application tenancy. |
+| pgAdmin | <http://127.0.0.1:5050>, email `lab@example.invalid` | Preconfigured **Resume Match (read only)** connection as `lab_viewer`; SELECT only on `matching_document`, `matching_job`, `matching_outboxevent`, `matching_match`, `matching_completionnotification`, `matching_streamstate`, `matching_streamevent`. It can read all owners' rows in those tables, including synthetic source/results; it is an operator account, not application tenancy. |
+| Fan-out viewer | <http://127.0.0.1:8089>, generated separate GUI login | Read-only connections to both independent Valkey shards; owner wakes/leases, not documents or saved results. |
 | SeaweedFS admin | <http://127.0.0.1:23646/files?path=/buckets/resume-originals>, user `viewer` | Read-only cluster/filer access. Raw/quarantined files can be read or downloaded outside the application's clean-only owner checks; synthetic-only privileged operator boundary. |
-| OpenObserve | <http://127.0.0.1:5080>, email `lab@example.invalid` | Search `resume_match` by request/job/document UUID; service `api`, `relay`, `worker`, `provider` and lifecycle body explain the application outcome. |
+| OpenObserve | <http://127.0.0.1:5080>, email `lab@example.invalid` | Search `resume_match` by request/job/document UUID; services `api`, `relay`, `worker`, `provider`, `event-relay`, `gateway` and lifecycle body explain the application outcome. |
 | ClamAV | `docker compose exec scanner clamdtop` | Supported terminal dashboard for daemon queue/memory/signature state; `q` quits. The unauthenticated daemon socket is not published. |
 | Relay / local provider | OpenObserve; `./scripts/lab status` for heartbeat/health | Custom processes have no independent vendor GUI. Inspect dispatch/provider events beside the durable job; provider health is not a real Bedrock invocation. |
 | Initialization | `./scripts/lab status` | Completed migrations/storage/viewer initialization are prerequisites, not permanent dashboards. |
@@ -93,26 +94,42 @@ private password-file contract; direct password-file authentication also passed.
 **Pending:** pgAdmin's final authenticated connection and populated record view.
 Direct database checks do not close the browser gate.
 
+## AWS database identities
+
+The deployment separates application, streaming and bootstrap authority. Compose development processes share the configured runtime PostgreSQL login; its separate seven-table inspection account remains read-only.
+
+| Identity | Path and authority |
+| --- | --- |
+| Application | API, worker and relays use the read/write application login through RDS Proxy; no schema ownership or DDL |
+| Stream gateway | Separate proxy login; SELECT only on `auth_user`, `django_session`, `matching_streamstate`, `matching_streamevent`; no source/report reads |
+| Bootstrap | Direct privileged RDS connection; guarded transition to a nonlogin migration owner, preserving adopted application credentials |
+| Local inspection counterpart | Separate seven-table read-only viewer, with cross-owner synthetic operator access; never an application account |
+
+Role defaults provide UTC and finite SQL/lock timeouts. Proxy TLS uses the Amazon Trust Services chain; direct bootstrap uses the RDS CA bundle. Avoiding unnecessary session settings supports pooling, but real cloud pinning/borrow latency still needs measurement. [Deployment contract](../infra/terraform/README.md)
+
 ## Source handoffs
 
 <details>
 <summary>Commit-pinned implementation map</summary>
 
-| Step | Source / receiver | Contract |
+| Step | Exact source at verified runtime commit | Contract |
 | --- | --- | --- |
-| 1 UI input and submit | [App.tsx: analyze / source controls](https://github.com/junrillg/resume-match-bedrock/blob/880f9b8c820203353593c3eb5905cc13228f950d/frontend/src/App.tsx) | Selected original or saved ID, requirements and retry identity |
-| 1 HTTP boundary | [api.ts: api / downloadDocument](https://github.com/junrillg/resume-match-bedrock/blob/880f9b8c820203353593c3eb5905cc13228f950d/frontend/src/api.ts) · `frontend/nginx.conf` | Same-origin session/CSRF, UUID Idempotency-Key and bounded request timeout |
-| 2 Routing/access | `backend/config/urls.py` · `matching/middleware.py` · `config/settings.py` | Request metadata/body cap, session and CSRF before owner-scoped handlers |
-| 2 Input/reservation | [views.py: read_match_form / admit_jobs](https://github.com/junrillg/resume-match-bedrock/blob/4c8e18a5c544e142a604336c1c47cf415e90818e/backend/matching/views.py) | Owner lock, exact-byte/type fingerprint, quota, upload reservation and finalization |
-| 2 Original PUT | [documents.py: read_source / put_original](https://github.com/junrillg/resume-match-bedrock/blob/4c8e18a5c544e142a604336c1c47cf415e90818e/backend/matching/documents.py#L54) | Generated key, bounded bytes, Content-MD5, successful PUT acknowledgment; no unclean HEAD bypass |
-| 3–4 Dispatch | [jobs.py: relay_once / publish_job](https://github.com/junrillg/resume-match-bedrock/blob/4c8e18a5c544e142a604336c1c47cf415e90818e/backend/matching/jobs.py) · `config/celery.py` | Committed outbox → persistent UUID → publisher confirmation |
-| 5 Claim/source | [jobs.py: claim_job / run_job](https://github.com/junrillg/resume-match-bedrock/blob/4c8e18a5c544e142a604336c1c47cf415e90818e/backend/matching/jobs.py) · [documents.py: document_text / get_original / cloud_scan / scan_bytes](https://github.com/junrillg/resume-match-bedrock/blob/4c8e18a5c544e142a604336c1c47cf415e90818e/backend/matching/documents.py#L146) | Lease → owned/unexpired source → checksum/safety gate → parse or matching cache |
-| 5 Evidence | [services.py: extract_evidence / bedrock_request](https://github.com/junrillg/resume-match-bedrock/blob/4c8e18a5c544e142a604336c1c47cf415e90818e/backend/matching/services.py) · `backend/local_converse.py` | Source/skills to Converse, proposed evidence back; schema/quote validation remains application-owned |
-| 6 Result | [jobs.py: finish_job](https://github.com/junrillg/resume-match-bedrock/blob/4c8e18a5c544e142a604336c1c47cf415e90818e/backend/matching/jobs.py) · `models.py: Match` | Document then job locks, live lease, deterministic score and one report |
-| 6 Terminal notice | [notifications.py: persist_completion](https://github.com/junrillg/resume-match-bedrock/blob/880f9b8c820203353593c3eb5905cc13228f950d/backend/matching/notifications.py#L14) · `jobs.py: finish_job / fail_job` | Unique job notice inside outcome transaction, cascade on deletion |
-| 7 Processing/inbox/result | [App.tsx: navigate / poll / markRead / MatchResult](https://github.com/junrillg/resume-match-bedrock/blob/880f9b8c820203353593c3eb5905cc13228f950d/frontend/src/App.tsx) · [views.py: notifications / notification_read / job_detail](https://github.com/junrillg/resume-match-bedrock/blob/880f9b8c820203353593c3eb5905cc13228f950d/backend/matching/views.py#L188) | Owned detail + durable inbox; free navigation, no off-route redirect |
-| Source operations | `views.py: documents / document_download / document_detail` · `documents.py: tombstone / reconcile_documents` | List, clean attachment retrieval, immediate access fencing and retried cleanup |
-| Diagnostics | [telemetry.py: emit](https://github.com/junrillg/resume-match-bedrock/blob/4c8e18a5c544e142a604336c1c47cf415e90818e/backend/matching/telemetry.py) | Fixed event body and allowlisted safe attributes |
+| 1 Submit | [analyze → API client](https://github.com/junrillg/resume-match-bedrock/blob/4e69a31653b4dd78de6ac35ff59bace3b798ac6e/frontend/src/App.tsx#L361) | Original/saved ID, requirements and unchanged retry identity |
+| 1 HTTP | [api](https://github.com/junrillg/resume-match-bedrock/blob/4e69a31653b4dd78de6ac35ff59bace3b798ac6e/frontend/src/api.ts) | Same-origin session/CSRF and bounded timeout |
+| 2 Admission | [admit_jobs](https://github.com/junrillg/resume-match-bedrock/blob/4e69a31653b4dd78de6ac35ff59bace3b798ac6e/backend/matching/views.py#L273) | Owner-stream lock, unchanged-key recovery, reserve/PUT/finalize |
+| 2 Supply | [reserve_admission](https://github.com/junrillg/resume-match-bedrock/blob/4e69a31653b4dd78de6ac35ff59bace3b798ac6e/backend/matching/admission.py#L25) | Fair owner/global rate/active budgets, fresh queue/supply gate |
+| 2 Source | [put_original](https://github.com/junrillg/resume-match-bedrock/blob/4e69a31653b4dd78de6ac35ff59bace3b798ac6e/backend/matching/documents.py#L81) | Exact bounded bytes; database released before object I/O |
+| 3–4 Dispatch | [publish_job / relay_once](https://github.com/junrillg/resume-match-bedrock/blob/4e69a31653b4dd78de6ac35ff59bace3b798ac6e/backend/matching/jobs.py#L175) | Reused confirmed producer; UUID-only persistent delivery |
+| 3 Productive loop | [relay_jobs](https://github.com/junrillg/resume-match-bedrock/blob/4e69a31653b4dd78de6ac35ff59bace3b798ac6e/backend/matching/management/commands/relay_jobs.py) | Productive drain and separate bounded maintenance/supply sample |
+| 5 Source/process | [run_job](https://github.com/junrillg/resume-match-bedrock/blob/4e69a31653b4dd78de6ac35ff59bace3b798ac6e/backend/matching/jobs.py#L104) | Lease, source verification/safety, parser cache and external-I/O connection release |
+| 5 Provider | [extract_evidence](https://github.com/junrillg/resume-match-bedrock/blob/4e69a31653b4dd78de6ac35ff59bace3b798ac6e/backend/matching/services.py#L163) | Converse → schema/source/skill validation → weighted score |
+| 6 Commit | [finish_job](https://github.com/junrillg/resume-match-bedrock/blob/4e69a31653b4dd78de6ac35ff59bace3b798ac6e/backend/matching/jobs.py#L72) | Owner-stream → document → job fence; report, notice, revision and admission release |
+| 7a–b Event publication | [record_change / relay_events](https://github.com/junrillg/resume-match-bedrock/blob/4e69a31653b4dd78de6ac35ff59bace3b798ac6e/backend/matching/events.py#L25) | Durable owner revision then publish to stable ordered shard |
+| 7c Delivery | [Gateway.__call__](https://github.com/junrillg/resume-match-bedrock/blob/4e69a31653b4dd78de6ac35ff59bace3b798ac6e/backend/event_gateway.py#L284) | Session/origin checks; subscribe ACK then bounded replay and SSE |
+| 7d Reads/routes | [apply](https://github.com/junrillg/resume-match-bedrock/blob/4e69a31653b4dd78de6ac35ff59bace3b798ac6e/frontend/src/App.tsx#L247) | Authorized affected reads; preserve unrelated route/draft |
+| 7d Stream lifecycle | [workspaceEvents](https://github.com/junrillg/resume-match-bedrock/blob/4e69a31653b4dd78de6ac35ff59bace3b798ac6e/frontend/src/workspaceEvents.ts#L21) | One visible-tab EventSource, coalescing, bounded reads and jitter reconnect |
+| Inbox | [notifications / notification_read](https://github.com/junrillg/resume-match-bedrock/blob/4e69a31653b4dd78de6ac35ff59bace3b798ac6e/backend/matching/views.py#L209) | Signed keyset cursor and independent idempotent read receipt |
+| Source lifecycle | [tombstone / reconcile_documents](https://github.com/junrillg/resume-match-bedrock/blob/4e69a31653b4dd78de6ac35ff59bace3b798ac6e/backend/matching/documents.py#L211) | Immediate access fence, durable change and retried physical cleanup |
 
 </details>
 
@@ -133,24 +150,26 @@ New uploads reserve document/job identity before PUT, then finalize the document
 | Endpoint | Contract |
 | --- | --- |
 | `POST /api/jobs/` | Multipart original or saved `document_id`, requirements, UUID key; saved IDs may use `reprocess=true`; 202 with job/document state |
-| `GET /api/jobs/` | Owner's latest 100 jobs, document identity and optional saved report |
-| `GET /api/notifications/?offset=0` | Owner-scoped pages of 100 terminal notices, total unread count and next offset |
+| `GET /api/jobs/?summary=true` | Latest 100 owned jobs without repeated full evidence; detail GET supplies the saved report |
+| `GET /api/notifications/?cursor=` | Owner-scoped signed keyset pages of 100 notices, unread count and next cursor; legacy offset API remains compatible |
 | `POST /api/notifications/<id>/read/` | Owner-scoped CSRF-protected idempotent read receipt; opening a report is separate |
+| `GET /api/events/` | Authenticated owner SSE identifiers/revisions; exact separate gateway route |
+| `GET /api/documents/<id>/` | Owned current document metadata |
 | `GET /api/jobs/<id>/` | Owned state/attempts/safe error/report |
 | `DELETE /api/jobs/<id>/` | Delete comparison/result; established reusable source remains |
 | `GET /api/documents/` | Owner's latest 100 unexpired documents and lifecycle metadata |
 | `GET /api/documents/<id>/download/` | Ready, owned, unexpired and safety-verified bytes as no-store attachment |
 | `DELETE /api/documents/<id>/` | 202 tombstone; remove access/results immediately, retry object cleanup |
 
-A `202 uploading` concurrent replay confirms only a reservation: no outbox exists and storage may be incomplete. Retry the same original/key after interruption; a poll alone cannot resupply missing bytes. A new upload's finalized `202 queued` confirms successful PUT and committed dispatch intent. States include uploading, queued, running, succeeded and failed; 202 never promises a completed result. Accepted responses include `Location: /api/jobs/<id>/` and `Retry-After: 2`; JSON supplies local processing/result destinations. Cancelling an unfinished initial upload leads to cleanup rather than retaining an unready orphan.
+A `202 uploading` concurrent replay confirms only a reservation: no outbox exists and storage may be incomplete. Retry the same original/key after interruption; a status read cannot resupply missing bytes. A new upload's finalized `202 queued` confirms successful PUT and committed dispatch intent. States include uploading, queued, running, succeeded and failed; 202 never promises a completed result. Accepted responses include `Location: /api/jobs/<id>/` and `Retry-After: 2`; JSON supplies local processing/result destinations. Cancelling an unfinished initial upload leads to cleanup rather than retaining an unready orphan.
 
-Authentication, CSRF, owner and body/type limits apply throughout. Safe rejection statuses include 400 validation, 401 authentication, 403 CSRF, 404 unavailable/other-owner resource, 409 conflicting input or safety rejection, 413 body cap, 429 quota and 503 unavailable admission/storage/safety verification. Failed status reads do not fail durable work; the monitor retries with capped backoff and reconciles on return.
+Authentication, CSRF, owner and body/type limits apply throughout. Safe rejection statuses include 400 validation, 401 authentication, 403 CSRF, 404 unavailable/other-owner resource, 409 conflicting input or safety rejection, 413 body cap, 429 owner/rate/day budget and 503 unavailable admission/storage/safety verification. Failed status reads do not fail durable work; resource batches retry at most twice, then expose deliberate recovery. A new stream subscription reconciles saved state.
 
 ## Delivery, processing and recovery
 
 PostgreSQL owns jobs, outbox, leases, results and completion notifications. The relay publishes UUID-only persistent wakeups to `resume.match.quorum` and marks dispatch sent after broker confirmation. Redelivery is expected. Three provider claims, a ten-minute job deadline, 90-second leases and bounded retry backoff prevent endless work; lease-fenced completion permits one committed result. The pending cloud scan path requeues without consuming provider attempts, still bounded by the job deadline.
 
-`reconcile_documents` expires abandoned one-hour uploads, tombstones policy-expired sources, retries object deletion and clears derived state. Late upload completion restores deletion intent; document-first completion locks prevent deleted/expired work from recreating results. Cleanup tombstones remain seven days before removal. Legacy source-cleared records remain readable with source unavailable and receive finite cleanup policy.
+`reconcile_documents` expires abandoned one-hour uploads, tombstones policy-expired sources, retries object deletion and clears derived state. Late upload completion restores deletion intent; owner-stream → document → job completion locks prevent deleted/expired work from recreating results. Cleanup tombstones remain seven days before removal. Legacy source-cleared records remain readable with source unavailable and receive finite cleanup policy.
 
 <details>
 <summary>Focused local interruption checks</summary>
@@ -171,11 +190,15 @@ Stop only this Compose project's `worker` or `broker`, submit synthetic work, re
 
 Native History API navigation uses validated UUID paths and normal links/Back. A returned admission cannot redirect after navigation. Only the same still-active processing route advances on success; unrelated drafts survive background completion. Action-specific pending state leaves navigation and sign-out available. Form drafts are memory-only and are cleared on reload or authentication loss.
 
-The monitor makes one nonoverlapping batch: jobs, reports, documents, first inbox page and current job detail when relevant. Active work uses one-second checks; idle catch-up uses 15 seconds. Errors back off up to 30 seconds; hidden/offline tabs pause, with immediate return/reconnect reconciliation. Older inbox pages refresh on return/deletion. Individual HTTP requests time out after ten seconds. Transport failure never changes the saved job outcome.
+One visible authenticated tab holds one EventSource. Subscription acknowledgement precedes the initial/reconnect snapshot: session, lean jobs, legacy-only reports, documents and first inbox page, plus current job detail when relevant. Steady-state change IDs trigger affected reads, coalesced for 100 ms with at most four targeted requests in flight. More than 256 distinct pending IDs requests a fresh snapshot; there is no recurring workspace polling timer.
+
+Stream failure reconnects with jitter (15–30, 30–60, then 60–120 seconds), without automatic REST fallback. A failed resource batch retries twice with 30/60-second jittered delays before explicit recovery. Hidden/offline tabs close streams and abort reads; returning reconnects and reconciles. Requests time out after ten seconds. Session/navigation/deletion fences reject stale responses. Inbox pages use signed keyset cursors; returning/deletion resets older pages.
+
+The gateway caps configured sockets (2,000/process), owner leases (five globally), shared database work (four active and 64 queued) and replay (100 events; 24-hour retention). Subscribe ACK/generation barriers close replay races. Heartbeats every 15 seconds do no SQL. Stream lifetime is jittered 720–900 seconds, so fleet rollover still creates reconciliation load. These are configured bounds, not measured per-process capacity.
 
 Notifications share the original/job lifetime and cascade on deletion; a OneToOne job relation prevents duplicate terminal notices. No historical unread notices are backfilled. Server owner checks and CSRF protect reads/mutations. Session epochs, route revisions and explicit deletion fences prevent late responses restoring removed data or changing another route/source. An unrelated read acknowledgement cannot cancel a valid original download.
 
-The current UI passed **46 frontend tests** and the production build. A real paused-worker browser run verified continuing work, another submission, off-route completion without draft replacement, same-job result transition, result refresh/Back, read persistence and completion while the app tab was closed. Desktop/mobile 390×844 views passed without horizontal overflow. The completion inbox is in-app; external email/push is not implemented.
+The event-driven UI passed **66 frontend tests** and the production build. An earlier paused-worker browser run verified continuing work, another submission, off-route completion without draft replacement, same-job result transition, result refresh/Back, read persistence and completion while the app tab was closed. Desktop/mobile 390×844 views passed without horizontal overflow. The completion inbox is in-app; external email/push is not implemented.
 
 ## Correlated operational logs
 
@@ -191,7 +214,20 @@ WHERE request_id = 'PASTE_REQUEST_UUID'
 ORDER BY _timestamp ASC
 ```
 
-Alternatively filter by `job_id = 'PASTE_JOB_UUID'`. The admission request ID connects API, relay, worker and provider; a poll's X-Request-ID belongs to that separate GET. Look at the `body` column for lifecycle names. Verified records included `job.accepted`, `job.published`, `job.started`, `document.ready`, `provider.requested`, `provider.completed`, `provider.responded` and `job.succeeded` across four services. Arrival order can differ and export can lose events. PostgreSQL remains the business ledger. `notification.persisted` uses the admission request ID; `notification.read` has its own HTTP request ID. Join those events using `job_id` and `notification_id`; best-effort logs are not the notification store.
+Alternatively filter `job_id = 'PASTE_JOB_UUID'`. The admission request ID joins API acceptance, job relay, worker/provider and terminal notice. REST reads and notification acknowledgement have independent request IDs. Delivery events carry job/document IDs where relevant and a durable owner revision; gateway aggregate snapshots do not provide a per-request trace. Search `body` for lifecycle names; arrival order can differ and exports can lose records. PostgreSQL remains the ledger.
+
+| Signal | Interpretation |
+| --- | --- |
+| `admission.snapshot` · relay | Active/queued sample, oldest queue age and broker/worker readiness explain new-work admission pressure |
+| `job.accepted / published / started / succeeded / failed` | Processing journey; `notification.persisted` joins the terminal inbox via job ID |
+| `delivery.persisted / published / publish_failed` · API/worker/event-relay | Durable revision intent and wake publication; publication alone does not prove browser receipt |
+| `delivery.snapshot` · event-relay | Bounded pending-event count and oldest unpublished age |
+| `stream.snapshot` · gateway | Active streams, database work/queue, threads, overload/errors and event lag; heartbeat SQL remains absent |
+| `notification.read` · API | Independent acknowledgement joined by job/notification IDs |
+
+An authenticated OpenObserve API search on 2026-10-19 verified searchable ingestion over a 30-minute window: 118 gateway `stream.snapshot`, 60 event-relay `delivery.snapshot` and 572 relay `admission.snapshot` records, plus persisted/published events. These counts span separate scoped checks; they do not prove one-request correlation or a browser-layout review.
+
+For delivery health use SQL such as `SELECT * FROM "resume_match" WHERE body IN ('delivery.snapshot', 'stream.snapshot', 'admission.snapshot') ORDER BY _timestamp DESC LIMIT 100`. Valkey inspection establishes live transport state, not application outcomes. CloudWatch's saved journey query includes API, job relay, worker, gateway and event relay log groups.
 
 <details>
 <summary>Document events and telemetry limits</summary>
@@ -221,13 +257,11 @@ npm run build
 
 ## Verified local behavior
 
-The durable-document backend plus endpoint-safety fix passed **89 tests against Compose PostgreSQL**; three startup-helper tests also passed. Separate real S3-client/ClamAV and HTTP experiments exercised exact-byte upload/download, source reuse/reprocessing, infected/unavailable scanner rejection, storage outage/recovery and deletion/expiry fencing. Eight safe lifecycle events were searched across API, relay, worker and provider. These experiments complement unit mocks; they do not transform a mocked boundary test into a real service check.
+[ADR 0009](decisions/0009-event-driven-completion.md#local-verification) records the local 1,000-owner/two-gateway delivery run, both-shard restart, durable change delivery, reconnect burst and one actual comparison through SSE to authorized result retrieval. API probe p95 was 25.6 ms; the five-second idle sample made zero gateway database requests. This does not establish million-user or 100-comparison/second capacity.
 
-The Terraform milestone passed format, backend-free initialization, validation and **eight plan-only mocked-provider runs**, including private/encrypted originals, role/tag-gate isolation, endpoint/ECR preservation, retention and ACTIVE scanner enablement. No real AWS API, provisioned service or managed failover was verified.
+[ADR 0010](decisions/0010-bounded-deployment.md#verification) records 155 PostgreSQL regression tests, subsequent 20 admission/publishing and eight ownership/bootstrap checks, fifteen credential-free Terraform mock plans and four nginx checks. A reused producer dispatched 200 UUIDs in 0.538 seconds; an eight-thread 200-operation SQL reservation test measured 174.73 operations/second. These isolate mechanisms rather than complete model-processing throughput. The updated real comparison reached saved result/inbox through SSE and removed its original during fixture cleanup.
 
-Desktop and 390 × 844 mobile browser checks verified an 80% report, saved-source reuse with explicit reparse, comparison deletion retaining its source, and document deletion removing related reports before eventual source cleanup. No horizontal overflow was observed. Exact-byte download is verified at the HTTP boundary; browser file persistence was not measured.
-
-Local observations are not throughput benchmarks or SLAs. Cloud deployment, IAM enforcement, managed scan latency, restoration/failover, model quality and organization identity still require their own acceptance evidence. The seven-day RDS backup window requires restore-time deletion/expiry reconciliation before admission reopens.
+Earlier durable-source checks exercised exact-byte retrieval, reuse/reprocessing, infected/unavailable scanning, storage interruption, expiry/deletion fences and restart persistence. Earlier desktop/mobile checks verified route/draft preservation and original deletion, with no horizontal overflow at 390 × 844. Current public diagram/source checks do not replace a fresh hosted browser review. AWS deployment, managed failover, model quality, federation and full-scale capacity remain unmeasured. Restore-time deletion/expiry reconciliation must precede admission after the seven-day RDS backup window.
 
 ## Actual build history
 
@@ -253,8 +287,12 @@ before the remaining UI/logging implementation; it has not been backdated.
 | Document-aware UI | [d290381](https://github.com/junrillg/resume-match-bedrock/commit/d290381664ebe3e62532d6756d5989af472972ca) |
 | Connected inspection design | [f60d186](https://github.com/junrillg/resume-match-bedrock/commit/f60d186) |
 | Connected read-only service viewers | [17ba0eb](https://github.com/junrillg/resume-match-bedrock/commit/17ba0ebb14af3852a2c2682f48d0c2e993a42bba) |
+| Event ledger, sharded fan-out and asynchronous SSE runtime | [4cc9cee](https://github.com/junrillg/resume-match-bedrock/commit/4cc9cee) |
+| Bounded admission, productive dispatch and small AWS serving path | [4e69a31](https://github.com/junrillg/resume-match-bedrock/commit/4e69a31653b4dd78de6ac35ff59bace3b798ac6e) |
 
-## Completion delivery verification · 2026-10-19
+## Earlier completion delivery milestone · 2026-10-19
+
+The following records predate the event-delivery and bounded-deployment checks above; they establish the original durable inbox/route behavior.
 
 Backend: **112 PostgreSQL tests**, migration applied/no drift, and the new notification table admitted to the existing read-only viewer role. Real HTTP verification observed two queued jobs completing with one persisted notice each, fresh-login recovery, idempotent acknowledgement, cross-owner 404s and correlated API/relay/worker/notice events. All probe data used separate synthetic owners and was cleaned up. Existing local services and volumes were preserved.
 

@@ -56,3 +56,17 @@ AWS's icon page permits use in architecture diagrams and related material and as
 third-party library users to check current icons. No separate usage/license document
 was present in the ZIP. Icons remain AWS assets; the application license does not
 relicense them. Use implies neither AWS endorsement nor a deployed environment.
+
+## Event delivery and shared SQL ingress
+
+Added 19 October 2026 from the same official 31 July 2026 archive. Each file
+retains its original bytes, verified against the archive before embedding:
+
+- [`Arch_Amazon-ElastiCache_64.svg`](Arch_Amazon-ElastiCache_64.svg) — `d7f3d85f54a818a33d0772c56688cdd0453558295a39ec9894f4d107ea7ebef5`
+  `Architecture-Service-Icons_07312026/Arch_Databases/64/Arch_Amazon-ElastiCache_64.svg`
+
+- [`Res_Amazon-ElastiCache_ElastiCache-for-Valkey_48.svg`](Res_Amazon-ElastiCache_ElastiCache-for-Valkey_48.svg) — `5f7a4f1ca50f4e51c7f5e5dd7dfa284709d1c96f16f776d11e2a8e07ddeddccb`
+  `Resource-Icons_07312026/Res_Databases/Res_Amazon-ElastiCache_ElastiCache-for-Valkey_48.svg`
+
+- [`Res_Amazon-RDS-Proxy-Instance_48.svg`](Res_Amazon-RDS-Proxy-Instance_48.svg) — `d2bbebf6028809e2417a144b02b7fcadf136bfd4af98b1ec3cba6c6e48f17f05`
+  `Resource-Icons_07312026/Res_Databases/Res_Amazon-RDS-Proxy-Instance_48.svg`

@@ -1,11 +1,19 @@
-%% Local inspection boundary; service-inspection.svg is the accessible publication layout.
-flowchart LR
-  accTitle: Inspect local service boundaries
-  accDescr: RabbitMQ delivers UUID tasks to Celery while distinct authenticated local viewers inspect broker, task events, database rows and object storage. OpenObserve and clamdtop cover process and scanner diagnostics.
-  Q["RabbitMQ quorum queue"] -->|"Business job-reference delivery"| W["Celery worker"]
-  RM["RabbitMQ Management :15672<br/>lab_monitor · monitoring only"] -. "Queue / consumer metrics" .-> Q
-  W -. "Task events via RabbitMQ" .-> F["Flower :5555<br/>Read-only task history"]
-  PG["pgAdmin :5050<br/>lab_viewer · SELECT four tables"] -. "Read durable job / result" .-> DB["PostgreSQL business ledger"]
-  SV["SeaweedFS admin :23646<br/>Read-only privileged operator"] -. "Cluster-wide filer reads" .-> OBJ["SeaweedFS originals<br/>Includes raw / quarantined bytes"]
-  %% OpenObserve correlates API/relay/worker/provider events; clamdtop observes scanner queue/signatures.
-  %% All web viewer listeners bind 127.0.0.1. Task SUCCESS does not imply comparison success.
+%% Logical companion to the native SVG; generated from the same service/edge definitions.
+flowchart TB
+  accTitle: Inspect the local runtime
+  accDescr: RabbitMQ Management inspects queue metrics, Flower observes transport task events, pgAdmin reads seven allowlisted application tables, Redis Commander inspects both Valkey shards, and the storage admin can read privileged original bytes. OpenObserve correlates safe lifecycle and delivery metadata.
+  Queue["RabbitMQ quorum<br/>Persistent UUID deliveries<br/>Separate from application result status"]
+  BrokerView["RabbitMQ Management<br/>:15672 · lab_monitor<br/>Queue/consumer metrics; no queue payload access"]
+  Worker["Celery worker<br/>Leased, idempotent application effects<br/>Transport task events sent through RabbitMQ"]
+  Flower["Flower<br/>:5555 · read-only task history<br/>Task SUCCESS differs from comparison outcome"]
+  DB["PostgreSQL<br/>Job, document, result, outbox and inbox<br/>Owner revision + StreamEvent delivery ledger"]
+  PG["pgAdmin<br/>:5050 · lab_viewer<br/>SELECT seven allowlisted application tables"]
+  Cache["Two fixed Valkey shards<br/>Owner-channel wakes + socket lease keys<br/>Transient fan-out; durable replay lives in SQL"]
+  CacheView["Redis Commander<br/>:8089 · viewer<br/>Both shards; scoped read-only Valkey ACL"]
+  Original["SeaweedFS originals<br/>Stored source bytes, including quarantine<br/>Application scan/owner gates remain separate"]
+  StorageView["SeaweedFS admin<br/>:23646 · privileged read-only operator<br/>Cluster-wide reads include raw originals"]
+  BrokerView -.-> Queue
+  Flower -.-> Worker
+  PG -.-> DB
+  CacheView -.-> Cache
+  StorageView -.-> Original

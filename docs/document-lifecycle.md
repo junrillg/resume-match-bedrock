@@ -2,7 +2,7 @@
 
 Original bytes belong in private object storage; the database owns identity and application state. A comparison references a retained document, allowing another requirement set or explicit reprocessing without asking the owner to upload again.
 
-![Document source and application-record boundaries.](https://raw.githubusercontent.com/junrillg/resume-match-bedrock/8aaace9d884240208ecd9d07bdfd8ace2b1c1271/docs/assets/document-lifecycle.svg)
+![Document source and application-record boundaries.](assets/document-lifecycle.svg)
 
 ## What is retained
 
@@ -19,9 +19,11 @@ This is project policy, not a universal legal retention standard. A new comparis
 
 ## Admission across two stores
 
+Unchanged-key recovery precedes new-work supply/fairness limits. External object/scanner/model I/O releases database connections; accepted work keeps recovery even when new admission is unavailable.
+
 1. Reserve a Document and uploading Job with checksum, opaque UUID key and upload lease.
 2. PUT exact bytes outside the database transaction; bounded content and media checks precede storage.
-3. Under locks, verify current upload identity, mark the document pending, and commit queued job + outbox.
+3. Under owner-stream → document → job locks, verify current upload identity, mark the document pending, and commit queued job + outbox.
 
 Only the third boundary admits processable work. A concurrent replay may receive `202 uploading` from step 1. A PUT outage returns a safe error while retaining retry identity; database finalization failure can leave a tracked object awaiting the same-input retry or cleanup. Reconciliation expires abandoned reservations after one hour. Late PUT success racing deletion restores cleanup intent rather than queueing new work.
 
@@ -33,13 +35,13 @@ A matching parser version can reuse extracted text, but each comparison still ve
 
 ## Deletion and expiry
 
-![Deletion and expiry: tombstone access, fence work, retry object deletion, clear metadata and eventually remove the cleanup tombstone.](https://raw.githubusercontent.com/junrillg/resume-match-bedrock/d5dbc6e9d22999b50ca3c7737e25b063ce206f74/docs/assets/document-deletion.svg)
+![Deletion and expiry: tombstone access, fence work, retry object deletion, clear metadata and eventually remove the cleanup tombstone.](assets/document-deletion.svg)
 
 [Diagram source](assets/document-deletion.mmd)
 
 An established comparison can be deleted independently while its reusable document remains. Cancelling its initial unfinished upload is different: a late successful PUT or expired upload reservation causes source cleanup. The application does not publish work for an unready original.
 
-A document tombstone immediately hides access and removes related comparison/results, then object deletion retries. Upload leases bound the interval before cleanup confirmation; stale worker completion cannot recreate a removed result. Rejected source bytes are removed while its safe failed comparison remains visible until policy expiry. The deleted cleanup tombstone remains for seven days before removal.
+An owner-stream/document-locked tombstone records durable workspace changes and immediately hides access and removes related comparison/results, then object deletion retries. Upload leases bound the interval before cleanup confirmation; stale worker completion cannot recreate a removed result. Rejected source bytes are removed while its safe failed comparison remains visible until policy expiry. The deleted cleanup tombstone remains for seven days before removal.
 
 The AWS bucket is newly created without enabled versioning. S3 lifecycle expires originals as a delayed backstop; application clocks enforce access/derived-data expiry. Terraform blocks automatic bucket destruction. Enabling future versioning, replication or backups requires historical-version erasure and restore reconciliation, not just delete markers.
 

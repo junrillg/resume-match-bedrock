@@ -128,6 +128,8 @@ Populated-screen checks exposed two release-specific integration details:
 
 ## Nonblocking completion journey · 2026-10-19
 
+Historical transport decision: bounded polling below was superseded by ADR 0009; resumable routes, durable notices and cleanup remain.
+
 | Primary source | Supported behavior | Decision |
 | --- | --- | --- |
 | [Microsoft asynchronous request-reply](https://learn.microsoft.com/en-us/azure/architecture/patterns/asynchronous-request-reply) | Accepted work has a separate status resource; polling can avoid persistent-connection complexity | Separate submission from a resumable processing route; bounded background reads |
@@ -155,3 +157,7 @@ The target is one million simultaneously connected users, not one million accoun
 These sources support architectural choices. The implementation's scoped load,
 failure and isolation results remain separate evidence. A fleet outage must not
 turn one million streams into repeated full-workspace HTTP polling.
+
+## Bounded deployment · 2026-10-19
+
+[ADR 0010](decisions/0010-bounded-deployment.md#sources) records the checked primary references for RDS Proxy TLS/pooling and pinning, ElastiCache ACLs, PostgreSQL ownership and deployment budgets. The implemented result is a small initial deployment on the same durable SSE path, distinct application/stream credentials, connection release around external I/O, productive dispatch and finite logical admission. Mock plans verify configuration; local SQL/publisher measurements do not establish managed capacity or complete comparison throughput.

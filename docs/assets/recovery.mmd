@@ -1,28 +1,21 @@
-sequenceDiagram
-  accTitle: Admission and recovery when the broker is unavailable
-  accDescr: The API accepts committed work while RabbitMQ is down. The relay retries unsent dispatch. Publication may repeat after an uncertain confirmation, so workers use database claims and unique result writes.
-  participant U as React
-  participant A as Django
-  participant D as PostgreSQL
-  participant R as Relay
-  participant Q as RabbitMQ
-  participant W as Worker
-  U->>A: POST job + idempotency key
-  Note over A,D: New original PUT already confirmed
-  A->>D: Finalize queued Job + Outbox
-  D-->>A: Commit
-  A-->>U: 202 queued + IDs
-  R->>D: Read unsent dispatch
-  R--xQ: Publish fails: broker down
-  Note over D,R: Intent stays unsent<br/>Job remains queued
-  R->>Q: Retry after broker returns
-  Q-->>R: Publisher confirm
-  R->>D: Mark dispatch sent
-  Q->>W: UUID delivery can repeat
-  W->>D: Short locked claim + lease token
-  Note over W: Fetch, scan, extract + validate<br/>Outside transaction
-  W->>D: Current token? Score + one result + terminal state
-  W-->>Q: Acknowledge completion
-  U->>A: GET job status
-  A->>D: Owner-scoped read
-  A-->>U: succeeded + evidence report
+flowchart TB
+  accTitle: Recovery follows durable ownership
+  accDescr: New work is bounded by admission while accepted work retains its outbox, leases and durable outcome. Fan-out failure never deletes outcomes; replay or a fresh snapshot recovers the browser.
+  N[New logical submission] --> A{Fresh supply and budgets?}
+  A -->|No| REJECT[429 or 503 + bounded retry guidance]
+  A -->|Yes| ACCEPT[2 Stored original + queued job + outbox]
+  ACCEPT --> B{3 Broker confirms?}
+  B -->|No / ambiguous| O[Keep intent; confirmed publication may repeat]
+  O --> B
+  B -->|Yes| W[4–5 Worker lease and source safety]
+  W -->|Interrupted| L[Lease / deadline reconciliation; bounded retry]
+  L --> W
+  W -->|Terminal| SAVE[6 Outcome + notice + durable revision]
+  SAVE --> F{7b Fan-out available?}
+  F -->|No| D[Keep unpublished intent; retry]
+  D --> F
+  F -->|Yes| G[7c SSE gateway reads durable gap]
+  G -->|Disconnected or old cursor| S[Subscribe then replay or reset snapshot]
+  S --> READ[7d Authorized REST reads]
+  G --> READ
+  READ --> UI[Result on same processing route; inbox elsewhere]

@@ -1,115 +1,17 @@
-sequenceDiagram
-    autonumber
-    participant Job as run_job / finish_job
-    participant Docs as document_text / get_original
-    participant DB as PostgreSQL
-    participant Store as SeaweedFS or AWS S3
-    participant Safety as ClamAV or GuardDuty
-    participant Parse as services.read_resume
-    participant Evidence as services.extract_evidence
-    participant Provider as Local ConverseHandler or AWS Bedrock
-    Job->>Docs: document_text(claim)
-    Docs->>DB: Find owner document, PENDING/READY and unexpired
-    alt No accessible document
-        Docs-->>Job: DocumentError, terminal failure path
-    else Accessible document
-        Docs->>Docs: get_original(document) -> client()
-        opt DOCUMENT_SCAN_MODE is guardduty
-            Docs->>Store: cloud_scan(): get_object_tagging()
-            Store-->>Docs: GuardDutyMalwareScanStatus
-            alt NO_THREATS_FOUND
-                Note over Docs,Safety: Continue to object GET
-            else Scan not yet ready
-                break Defer scan-pending job
-                    Docs-->>Job: ScanPending, no object GET
-                    Job->>DB: Matching lease: decrement attempts, enqueue_again(now + 8 seconds)
-                end
-            else Threat, unsupported, access denied or failed
-                break Reject unsafe original
-                    Docs->>DB: Lock Document, REJECTED, clear cache, schedule byte deletion
-                    Docs-->>Job: DocumentError, no object GET
-                    Job->>Job: finish_job(error_code), do not extract or score
-                end
-            end
-        end
-        opt Safety gate allows retrieval
-            Docs->>Store: get_object(object_key), bounded read <= 1 MiB + 1, close body
-            Store-->>Docs: Original bytes
-            Docs->>Docs: Verify exact size and SHA-256 against Document metadata
-            opt DOCUMENT_SCAN_MODE is clamav
-                Docs->>Safety: scan_bytes(): fresh database check via _clam_command(), INSTREAM chunks
-                Safety-->>Docs: stream: OK, threat, or unavailable
-            end
-        end
-        alt Terminal integrity, malware, text or parser rejection
-            Docs->>DB: Lock Document, REJECTED, clear cache, schedule byte deletion
-            Docs->>Docs: emit(document.rejected)
-            Docs-->>Job: DocumentError, skip READY/evidence/scoring
-        else Storage or scanner unavailable
-            Docs-->>Job: DocumentUnavailable, transient retry path
-        else Scan pending
-            Docs-->>Job: ScanPending, delayed retry path
-        else Original passes safety and integrity
-            alt Current parser_version, cached text and reprocess is false
-                Docs->>Docs: Reuse extracted_text only after retrieving and safety-checking original
-            else Cache absent/stale or reprocess requested
-                Docs->>Parse: TXT: decode UTF-8-sig, PDF: SimpleUploadedFile, read_resume()
-                Note over Parse: Nonempty text <= 30,000 characters, no NUL, PDF strictness, unencrypted, <=10 pages and bounded decompression/work, no OCR
-                alt read_resume succeeds
-                    Parse-->>Docs: Validated extracted text
-                else InvalidInput or decoding error
-                    break Reject parsing failure
-                        Docs->>DB: Lock Document, REJECTED, clear cache, schedule byte deletion
-                        Docs-->>Job: DocumentError
-                        Job->>Job: finish_job(error_code), no READY/evidence/scoring
-                    end
-                end
-            end
-            Docs->>DB: Lock Document, recheck lifecycle/expiry, READY, extracted_text, PARSER_VERSION, scan_checked_at
-            Docs->>Docs: emit(document.ready)
-            Docs-->>Job: Text
-            Job->>Evidence: extract_evidence(text, requirements, provider, correlation)
-            alt provider is demo
-                Evidence->>Evidence: literal_evidence() -> literal_match()
-            else provider is bedrock-local or bedrock
-                Evidence->>Evidence: bedrock_request() -> correlation_ids()
-                Evidence->>Provider: boto3 bedrock-runtime client.converse(request)
-                Note over Provider: bedrock-local: ConverseHandler.do_POST() -> reply(), bedrock: AWS endpoint
-                alt Provider call and response envelope succeed
-                    Provider-->>Evidence: One bounded JSON text block, stopReason must be end_turn
-                else Provider rejects, times out, fails or returns malformed response
-                    break Stop evidence extraction on provider failure
-                        Evidence-->>Job: TransientProviderError or ProviderError
-                        Job->>Job: finish_job(error_code, transient when appropriate), no score
-                    end
-                end
-            end
-            Evidence->>Evidence: validate_evidence(): exact ordered skills, exact source quotes <=240 chars, literal skill boundaries, original weights
-            alt Evidence passes validation
-                Evidence-->>Job: Validated evidence
-            else Evidence fails validation
-                break Stop invalid evidence
-                    Evidence-->>Job: ProviderError
-                    Job->>Job: finish_job(error_code), no score
-                end
-            end
-            Job->>DB: finish_job(): BEGIN, lock Document then Job
-            Note over Job,DB: Recheck document lifecycle/expiry, RUNNING status, matching current lease, unexpired lease and overall deadline before committing a result
-            alt Stale lease, deleted/missing job or unavailable document
-                Job->>Job: Return false, no Match or completion notification
-            else Current claim but document is not READY
-                Job->>DB: fail_job(document_rejected) plus unique failure notification, COMMIT, no score
-            else Current claim but overall deadline exceeded
-                Job->>DB: fail_job(deadline_exceeded) plus unique failure notification, COMMIT, no score
-            else Current claim with validated evidence and READY document
-                Job->>Job: calculate_score(): matched weights / total weights * 100
-                Note over Job: Decimal with ROUND_HALF_UP to two places, 8 matched weight / 10 total = 80.00
-                Job->>DB: Match.objects.create(), Job SUCCEEDED, clear legacy resume_text and lease
-                Job->>DB: persist_completion(): get_or_create unique CompletionNotification for Job
-                Note over Job,DB: Match, terminal Job and notification commit together, any write failure rolls them all back
-                Job->>DB: COMMIT
-                Job->>Job: on_commit emit(notification.persisted), job_event() emits job.succeeded
-            end
-        end
-    end
-    Note over Job,Provider: Bedrock supplies evidence, not the final score. Original bytes stay in object storage, cache/metadata stay in Document, report stays in Match, terminal outcomes and unread state stay in PostgreSQL
+flowchart TB
+  accTitle: Source retrieval to fenced score
+  accDescr: External work uses no held database connection. Source integrity, malware checks and evidence validation precede atomic result commitment.
+  C[5 claim_job] --> RELEASE[Release DB connection before external I/O]
+  RELEASE --> G[document_text: retrieve exact original + size / SHA-256]
+  G --> SAFETY[Local ClamAV; AWS GuardDuty tag before GET]
+  SAFETY --> CACHE{Matching parser version?}
+  CACHE -->|Yes, not explicit reprocess| TEXT[Bounded extracted text]
+  CACHE -->|No| PARSE[Parse selectable PDF / UTF-8 text]
+  PARSE --> TEXT
+  TEXT --> PROVIDER[extract_evidence → Converse request]
+  PROVIDER --> VALID[Validate schema, source quotes and skill mentions]
+  VALID --> SCORE[Application-owned weighted coverage]
+  SCORE --> LOCK[6 Lock owner stream → document → job]
+  LOCK --> FENCE{Live source and current lease?}
+  FENCE -->|Yes| SAVE[Atomic Match + job + notice + revisions; release admission]
+  FENCE -->|No| DISCARD[Reject stale completion]

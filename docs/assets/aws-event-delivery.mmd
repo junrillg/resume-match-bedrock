@@ -1,0 +1,19 @@
+%% Logical companion to the native SVG; generated from the same service/edge definitions.
+flowchart TB
+  accTitle: AWS: dedicated delivery and shared SQL ingress
+  accDescr: PostgreSQL outcomes and durable owner events share a transaction. Event-relay accesses the ledger through RDS Proxy, publishes to fixed independent ElastiCache for Valkey shards, and a dedicated Fargate raw ASGI gateway replays with a read-only database role. ALB routes SSE separately from targeted Django API reads.
+  DB["7a  Persist<br/>RDS PostgreSQL<br/>Outcome + revision + event<br/>Durable application authority"]
+  Proxy["RDS Proxy<br/>Shared bounded SQL ingress<br/>App writer / stream reader<br/>Verified TLS + role defaults"]
+  Relay["7b  Publish<br/>Event-relay on ECS/Fargate<br/>Indexed ledger batches<br/>Mark after owner wake"]
+  Gateway["7c  Deliver change<br/>Dedicated raw ASGI gateway on ECS/Fargate<br/>Read-only replay; bounded shared DB pool<br/>Session + owner checks; global socket leases"]
+  Cache["Fixed independent shards<br/>ElastiCache for Valkey: private TLS primaries<br/>Stable owner hash; shared subscriptions<br/>Missed wakes recover from durable replay"]
+  Browser["React browser<br/>One EventSource per visible authenticated tab<br/>Change IDs coalesce targeted REST reads<br/>Render saved result and durable inbox"]
+  ALB["7d  Route + read<br/>ALB: /api/events/ → gateway:8001<br/>Other paths → app:8080 → Django<br/>Owner-scoped saved-state response"]
+  Recovery["Recovery and isolation<br/>Gateway SQL uses resume_stream; ordinary transactions use resume_app; nonlogin ownership stays in bootstrap."]
+  Relay -->|"SQL"| Proxy
+  Proxy -->|"SQL"| DB
+  Gateway -->|"Indexed read-only replay"| Proxy
+  Relay -.->|"Owner wake"| Cache
+  Cache -.->|"Wake"| Gateway
+  ALB <-->|"SSE request / streamed response"| Gateway
+  Browser <-->|"HTTPS"| ALB

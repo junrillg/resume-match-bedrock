@@ -38,9 +38,11 @@ local mechanisms are verified; no managed-cloud capacity or deployment is implie
 
 Steps **1 Submit · 2 Accept · 3 Relay · 4 Queue · 5 Process · 6 Save · 7 Read** are shared across the [architecture](architecture.md), [document lifecycle](document-lifecycle.md) and [AWS journey](aws-service-journey.md).
 
+Unchanged-key recovery precedes new-work limits. New logical jobs reserve finite owner/global capacity only when sampled broker/worker supply is fresh and queue age is acceptable; `429`/`503` rejection leaves accepted work intact.
+
 New-source admission has three boundaries: reserve document/job identity in PostgreSQL; PUT the original; then commit pending document + queued job + outbox together. The object service and database do not share a transaction. Reserved-upload identity, leases, deadlines and reconciliation close partial-write/deletion failures. A concurrent replay can return `202 uploading`; only a finalized queued receipt confirms stored source. Saved-source reuse queues another comparison without uploading again.
 
-After commit, the relay publishes only a UUID. The worker fetches verified source, passes the malware gate, parses or reuses matching extraction, calls the evidence provider, validates quotes, and saves a fenced score/result and terminal notification atomically. Browser reads overlap those processes. At-least-once delivery and provider calls can repeat; the database permits one committed report per job.
+After commit, the relay publishes only a UUID through a reused confirmed producer, draining productive batches without an unconditional sleep. A separate bounded maintenance loop samples supply and reconciles leases/cleanup. The worker fetches verified source, passes the malware gate, parses or reuses matching extraction, calls the evidence provider, validates quotes, and saves a fenced score/result and terminal notification atomically. External source/scanner/provider I/O releases database connections. Completion locks owner stream → document → job and atomically adds durable owner revisions and releases admission. The event relay and SSE gateway signal targeted authorized reads. At-least-once delivery and provider calls can repeat; the database permits one committed report per job.
 
 ## Service choices
 
@@ -70,9 +72,10 @@ records the service inventory and least-privilege boundaries.
 | React/nginx + Django API | Existing application plus browser Network panel | Request/status/response and owner-visible report |
 | Celery worker | Flower at `127.0.0.1:5555/tasks` | Worker heartbeat and transport task lifecycle; comparison outcome remains in PostgreSQL |
 | RabbitMQ | Management at `127.0.0.1:15672/#/queues` | Quorum queue, consumers, ready/unacknowledged messages and delivery activity |
-| PostgreSQL | pgAdmin at `127.0.0.1:5050`, dedicated read-only database role | Document/job/outbox/result relationships and durable business state |
+| PostgreSQL | pgAdmin at `127.0.0.1:5050`, dedicated read-only database role | Document/job/outbox/result/notice plus stream-state/event records; seven allowlisted tables |
 | SeaweedFS | Authenticated read-only `weed admin` at `127.0.0.1:23646/files?path=/buckets/resume-originals` | Cluster/bucket/object inventory; privileged raw-object visibility is separate from the owner-scoped application |
-| API/relay/worker/provider diagnostics | Existing OpenObserve | Correlated, payload-free lifecycle events |
+| Valkey fan-out | Read-only viewer at `127.0.0.1:8089` | Two independent owner-wake shards and bounded connection leases; no result-store claim |
+| API/relay/worker/provider/event-relay/gateway diagnostics | Existing OpenObserve | Correlated, payload-free lifecycle events and delivery/admission health |
 | Relay | OpenObserve plus supported process/heartbeat inspection | Dispatch intent and publication/recovery without inventing a separate relay GUI |
 | ClamAV | Official `clamdtop` terminal dashboard, plus health and OpenObserve safety events | Scan queue, memory/signature readiness and rejection; daemon port stays private |
 | Local Converse provider | OpenObserve and existing health endpoint | Separate HTTP hop and safe success/rejection state; no live Bedrock console claim |
@@ -89,25 +92,13 @@ account. Research must resolve any viewer capability or privilege uncertainty be
 wiring that viewer; an unavailable GUI must be reported with its supported inspection
 alternative, never silently skipped.
 
-## Inspection delivery record
+## Inspection evidence
 
-| Requirement | Status | Evidence | Next action |
-| --- | --- | --- | --- |
-| Complete service/viewer inventory and access design | Verified | ADR 0007, checked release sources and pinned images | Retain the complete inventory when services change |
-| Connected default startup and private, least-privilege access | Verified | 13 healthy services; auth/permission checks and 10 focused tests | Preserve existing secrets/volumes |
-| Meaningful task/queue/database/storage activity | Runtime and three new GUIs verified; pgAdmin reconnect pending | Queue backlog/drain, Flower task/job mapping, retained object inventory, success/rejection and log/scanner views | Verify pgAdmin connection and populated records |
-| Public operating reference and matching diagrams | Verified | [Access/evidence reference](implementation-guide.md#service-inspection); published inspection diagram checked | Finish the remaining pgAdmin connection/record review |
-
-The design commit preceded **runtime viewers and focused tests** (`17ba0eb`);
-**operating docs, diagrams and final evidence** follow that runtime milestone.
-RabbitMQ, Flower and SeaweedFS populated browser review passed. pgAdmin registration
-was corrected after the browser exposed its password-file configuration gap; final
-connection/record review remains pending. Successful direct SQL does not close that gate.
-The stack remains running for review.
+RabbitMQ, Flower and SeaweedFS populated browser checks passed in the earlier viewer milestone. SQL privilege checks establish the seven-table read-only boundary; pgAdmin's final populated connection review remains pending. Later SSE runtime checks exercised both wake shards and two gateway processes. Source/runtime checks do not replace a hosted interface review. [Observed results and operating reference →](implementation-guide.md#service-inspection)
 
 ## Failure boundaries
 
-Object outage leaves recoverable upload identity, not a processable missing source. Broker outage leaves durable outbox intent. Pending cloud scans defer provider work within the job deadline; failed/unavailable scanning fails closed. Token checks prevent stale completion. Document deletion/expiry denies access and fences related work before retried object cleanup. Diagnostics can fail without failing business processing.
+Object outage leaves recoverable upload identity, not a processable missing source. Unavailable supply rejects new logical work; already accepted broker intent and outcomes stay durable. Fan-out publication and browser reconnection recover from the PostgreSQL event ledger. Pending cloud scans defer provider work within the job deadline; failed/unavailable scanning fails closed. Token checks prevent stale completion. Document deletion/expiry denies access and fences related work before retried object cleanup. Diagnostics can fail without failing business processing.
 
 The [lifecycle reference](document-lifecycle.md) defines source and derived-data cleanup, the seven-day cloud backup window, and restore-time reconciliation. Local logs retain three days; configured CloudWatch logs retain 30 days. Malware scanning reduces risk, and retained evidence can still be personal data.
 
@@ -133,7 +124,6 @@ recovery and bounded event-driven reads. Its deployment target and measured loca
 capacity are separate. The local implementation replaces recurring browser polling
 with SSE signals and targeted authorized reads. Stream heartbeats do not query the
 database; fan-out recovery reconciles the durable revision ledger. Terraform defines
-that same path with small initial capacity. The detailed public topology update remains
-a separate delivery milestone.
+that same path with small initial capacity. [Delivery topology](architecture.md#7--continue-work-and-return-to-the-outcome) and the [AWS journey](aws-service-journey.md) show both execution and connected delivery.
 
 [ADR 0008](decisions/0008-nonblocking-completion.md) defines the shipped processing, inbox and result routes. Action pending state is separate from worker progress; saved completion notices survive leaving the page. A paused-worker browser run verified a second submission, an unchanged off-route draft, explicit notification access, result refresh, read persistence and completion while the app tab was closed. The design, durable inbox and UI were verified and published as separate milestones.

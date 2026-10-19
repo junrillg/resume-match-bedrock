@@ -5,9 +5,9 @@ Status: local delivery verified; deployment defined and mock-plan verified, not 
 ## Context
 
 The design target is **1,000,000 simultaneously connected users**, with browser tabs,
-job arrivals and completion throughput budgeted separately. The existing client makes
-four or five list/detail requests per refresh, then waits one second while work is
-active. Five hundred visible tabs can therefore approach 2,000–2,500 requests/second.
+job arrivals and completion throughput budgeted separately. The prior client made
+four or five list/detail requests per refresh, then waited one second while work is
+active. Five hundred visible tabs could therefore approach 2,000–2,500 requests/second.
 No load evidence justifies that strategy for the target. This decision supersedes
 ADR 0008's transport choice; its durable inbox and nonblocking navigation remain.
 

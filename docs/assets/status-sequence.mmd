@@ -1,11 +1,22 @@
 sequenceDiagram
+  accTitle: SSE subscription, replay and targeted reads
+  accDescr: Subscription acknowledgement precedes durable replay and the browser snapshot. Owner wakes cause bounded event reads. Heartbeats perform no database polling. Reconnect uses durable cursors and a fresh authorized snapshot.
   participant UI as React
-  participant API as Django
+  participant G as ASGI gateway
+  participant V as Valkey shard
   participant DB as PostgreSQL
-  loop Active work, one poll at a time
-    UI->>API: GET /api/jobs/
-    API->>DB: Owner-scoped job + document + optional report
-    DB-->>API: Durable state
-    API-->>UI: JSON
-  end
-  Note over UI: Render score/evidence or safe failure. Stop at terminal state
+  participant API as Django API
+  UI->>G: GET /api/events/<br/>Session + optional cursor
+  G->>DB: Bounded session / owner check
+  G->>V: Subscribe, wait ACK<br/>Acquire owner connection lease
+  G->>DB: Replay owner revisions
+  G-->>UI: ready / replay / reset
+  UI->>API: Initial / reconnect snapshot
+  API-->>UI: Authorized current state
+  V-->>G: Minimal owner wake
+  G->>DB: Read durable revision gap
+  G-->>UI: change IDs + revision
+  UI->>API: Affected reads<br/>At most four in flight
+  API-->>UI: Saved state
+  G-->>UI: Heartbeat, no heartbeat SQL
+  Note over UI,G: Hidden / offline: close stream<br/>Outage: jittered SSE reconnect<br/>No automatic REST polling

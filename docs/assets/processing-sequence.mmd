@@ -1,25 +1,24 @@
 sequenceDiagram
-  accTitle: Dispatch, source safety, evidence and fenced result
-  accDescr: Relay publishes a UUID, a leased worker fetches and checks the source and passes the safety gate before parsing/provider use. PostgreSQL fences the final report.
-  participant R as Relay
+  accTitle: Dispatch, process and commit one outcome
+  accDescr: A reused confirmed producer drains durable dispatch intent. The worker verifies the retained source outside database connections, then atomically saves a fenced outcome, notification and delivery events.
+  participant R as Job relay
   participant DB as PostgreSQL
   participant Q as RabbitMQ
-  participant W as Worker
-  participant O as Object store
-  participant S as Safety gate
-  participant P as Converse<br/>provider
-  R->>DB: 3 Read outbox
-  R->>Q: 4 Publish job UUID
-  Q-->>R: Confirmed
-  R->>DB: Mark sent
-  Q->>W: UUID delivery
-  W->>DB: 5 Claim lease + document
-  W->>O: 5.1 GET source
-  O-->>W: Bytes
-  Note over W: Verify size/SHA
-  W->>S: 5.2 Safety check
-  S-->>W: Clean or fail closed
-  Note over W: 5.3 Parse or version cache
-  W->>P: 5.4 Source + skills + UUIDs
-  P-->>W: Proposed evidence
-  W->>DB: 6 Validate quotes + document/lease<br/>Score and save one report
+  participant W as Celery worker
+  participant S as Source + provider
+  R->>DB: 3 Read unsent outbox
+  R->>Q: 4 Publish UUID<br/>Reused producer
+  Q-->>R: Confirm
+  R->>DB: Mark sent<br/>Drain next batch
+  Q->>W: UUID delivery may repeat
+  W->>DB: 5 Claim lease
+  Note over W,S: Release DB before external I/O
+  W->>S: Verify original / safety<br/>Parse or reuse extraction
+  S-->>W: Bounded extracted text
+  Note over S,W: Local: GET → ClamAV<br/>AWS: clean tag → GET
+  W->>S: Converse: propose evidence
+  S-->>W: Proposed quotes
+  W->>W: Validate source + schema<br/>Calculate coverage
+  W->>DB: 6 Lock owner stream<br/>→ document → job, verify live lease/source
+  W->>DB: Commit report / notice / events<br/>Release admission
+  Note over DB,W: I/O may repeat<br/>Stale claim cannot replace outcome

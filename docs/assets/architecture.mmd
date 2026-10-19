@@ -1,18 +1,22 @@
-%% Logical companion; architecture-completion.svg is the self-contained publication layout.
+%% Logical companion to the native SVG; generated from the same service/edge definitions.
 flowchart TB
-  accTitle: Local comparison in seven business steps
-  accDescr: SeaweedFS originals, ClamAV, the HTTP provider, PostgreSQL and RabbitMQ run under Compose. Reads overlap background processing. Safe process logs reach OpenObserve.
-  UI["1 Submit · React + nginx"] --> API["2.1 Django validates; PostgreSQL reserves identity"]
-  API --> STORE["2.2 SeaweedFS S3 PUT · exact original"]
-  STORE --> AD["2.3 PostgreSQL pending document + queued Job + Outbox"]
-  AD --> R["3 Relay · publish UUID; await confirmation"] --> Q["4 Queue · RabbitMQ quorum"] --> W["5 Process · leased Celery worker"]
-  W --> GET["5.1 SeaweedFS GET + size/SHA check"]
-  GET --> SCAN["5.2 ClamAV · fail closed before parsing"]
-  SCAN --> PARSE["5.3 Parse or matching extraction cache"]
-  PARSE -->|"5.4 boto3 Converse"| P["Local HTTP contract provider:8090<br/>Deterministic evidence"]
-  P -->|"Proposed quotes"| W
-  API -->|"Reuse owned unexpired source; no new PUT"| AD
-  W -->|"Validate; current lease"| D["6 Save · same PostgreSQL<br/>Score + one report + terminal notice"]
-  Read["7 Read · processing route + durable inbox"] -. "Concurrent after receipt" .-> API
-  API -. "Status + notice + optional saved report" .-> Read
-  W -. "API / relay / worker / provider metadata" .-> LOGS["OpenObserve OSS"]
+  accTitle: One comparison, seven business steps
+  accDescr: Submit to acceptance, durable outbox, confirmed queue, leased processing and atomic outcome. A durable owner event reaches React over SSE; targeted API reads return saved results. SQL transport and delivery are expanded in the focused views.
+  Submit["1  Submit<br/>React + nginx :8088<br/>Session, CSRF, retry key<br/>Accepted work runs separately"]
+  Accept["2  Accept<br/>Django: supply + owner checks<br/>Reserve → upload → finalize<br/>Queued Job + durable Outbox"]
+  Relay["3  Relay<br/>Read committed dispatches<br/>Reuse confirmed producer<br/>Publish UUID; mark after confirm"]
+  Queue["4  Queue<br/>RabbitMQ quorum queue<br/>Persistent UUID deliveries<br/>Retries preserve logical identity"]
+  Process["5  Process<br/>Fetch clean source; parse/cache<br/>Converse → validate quotes<br/>Current lease fences completion"]
+  Save["6  Save<br/>One PostgreSQL transaction<br/>Outcome + report + inbox<br/>Owner revision + StreamEvent"]
+  Read["7  Read<br/>EventSource wakes React<br/>GET affected state via Django<br/>Open saved notification/result"]
+  Delivery["Delivery plane<br/>Ledger → event-relay → shards<br/>Raw ASGI gateway → SSE<br/>Durable replay after reconnect"]
+  Source["Source gate<br/>SeaweedFS retains originals<br/>ClamAV before parse/download<br/>Local HTTP Converse provider"]
+  Logs["Correlated operations<br/>API, relays, worker, provider and gateway emit safe lifecycle metadata to OpenObserve OSS."]
+  Submit --> Accept
+  Accept --> Relay
+  Relay --> Queue
+  Queue --> Process
+  Process --> Save
+  Save -->|"Committed change"| Delivery
+  Delivery -->|"SSE"| Read
+  Accept -.->|"202 receipt"| Read

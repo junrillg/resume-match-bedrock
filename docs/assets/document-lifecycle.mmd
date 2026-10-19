@@ -14,8 +14,8 @@ flowchart TB
   OBJ --> SCAN[5.2 ClamAV clean gate]
   SCAN --> PARSE[5.3 Parse or reuse matching extraction]
   PARSE --> P[5.4 HTTP Converse provider + evidence validation]
-  P --> SAVE[6 PostgreSQL document/lease fence + scored report]
-  SAVE --> READ[7 React polls owner state and renders]
+  P --> SAVE[6 Owner-stream / document / lease fence + report + notice + event]
+  SAVE --> READ[7 Event relay → Valkey → SSE → authorized state reads]
   API -. Ready source .-> DL[Owner download; attachment + no-store]
   API -. Delete or expiry .-> DEL[Tombstone + fence; relay retries object deletion]
   RES -. Abandoned upload .-> DEL

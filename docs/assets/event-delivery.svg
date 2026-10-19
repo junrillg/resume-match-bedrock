@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1060" height="1015" viewBox="0 0 1060 1015" role="img" aria-labelledby="title desc">
+  <title id="title">From committed state to browser</title>
+  <desc id="desc">The same transaction persists visible state and an owner revision. Event-relay publishes owner wakes to a fixed Valkey shard. A bounded raw ASGI gateway subscribes before replay and sends SSE. React reads affected state through the owner-scoped API; resets and reconnect snapshots recover state.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10Z" fill="#37566b" />
+    </marker>
+  </defs>
+  <style>text{font-family:Arial,Helvetica,sans-serif;fill:#173146}.title{font-size:26px;font-weight:700}.label{font-size:20px;font-weight:700}.body{font-size:18px}.small{font-size:16px;fill:#41596b}.edge{fill:none;stroke:#37566b;stroke-width:2.3;marker-end:url(#arrow)}.wake{stroke-dasharray:6 5}</style>
+  <rect width="1060" height="1015" fill="#fff" />
+  <g id="connections">
+    <path class="edge" d="M492 205L566 205" />
+    <path class="edge wake" d="M798 290L798 388" />
+    <path class="edge wake" d="M568 475L494 475" />
+    <path class="edge" d="M260 290L260 388" />
+    <path class="edge" d="M260 560L260 678" />
+    <path class="edge" d="M492 740L566 740" />
+    <path class="edge" d="M798 850L798 886L260 886L260 852" />
+  </g>
+  <g id="services">
+    <g id="Persist">
+      <rect x="32" y="120" width="460" height="170" rx="10" fill="#f0f7f8" stroke="#8ba4b4" />
+      <text x="50" y="159" class="label">7a  Persist</text>
+      <text x="50" y="199" class="body">PostgreSQL: revision + StreamEvent</text>
+      <text x="50" y="225" class="body">Same transaction as visible changes</text>
+      <text x="50" y="251" class="body">Indexed durable intent; owner-scoped order</text>
+    </g>
+    <g id="Publish">
+      <rect x="568" y="120" width="460" height="170" rx="10" fill="#f0f7f8" stroke="#8ba4b4" />
+      <text x="586" y="159" class="label">7b  Publish wake</text>
+      <text x="586" y="199" class="body">Event-relay: bounded SKIP LOCKED batches</text>
+      <text x="586" y="225" class="body">Publish owner wake, then mark published</text>
+      <text x="586" y="251" class="body">Retry from the ledger after interruption</text>
+    </g>
+    <g id="Gateway">
+      <rect x="32" y="390" width="460" height="170" rx="10" fill="#f0f7f8" stroke="#8ba4b4" />
+      <text x="50" y="429" class="label">7c  Deliver change</text>
+      <text x="50" y="469" class="body">Raw ASGI gateway replicas</text>
+      <text x="50" y="495" class="body">Subscribe ACK → indexed SQL replay</text>
+      <text x="50" y="521" class="body">Bounded DB work; no heartbeat SQL</text>
+    </g>
+    <g id="Shards">
+      <rect x="568" y="390" width="460" height="170" rx="10" fill="#f0f7f8" stroke="#8ba4b4" />
+      <text x="586" y="429" class="label">Fixed Valkey shards</text>
+      <text x="586" y="469" class="body">owner_id % shard_count; same ordered map</text>
+      <text x="586" y="495" class="body">Shared subscriptions; coalesced wake queues</text>
+      <text x="586" y="521" class="body">Missed wake → replay from PostgreSQL</text>
+    </g>
+    <g id="React">
+      <rect x="32" y="680" width="460" height="170" rx="10" fill="#f0f7f8" stroke="#8ba4b4" />
+      <text x="50" y="719" class="label">React browser</text>
+      <text x="50" y="759" class="body">EventSource receives revision + kind + IDs</text>
+      <text x="50" y="785" class="body">Coalesce affected job/document/inbox reads</text>
+      <text x="50" y="811" class="body">Render saved state and completion notifications</text>
+    </g>
+    <g id="API">
+      <rect x="568" y="680" width="460" height="170" rx="10" fill="#f0f7f8" stroke="#8ba4b4" />
+      <text x="586" y="719" class="label">7d  Read affected state</text>
+      <text x="586" y="759" class="body">Targeted owner-scoped Django GET</text>
+      <text x="586" y="785" class="body">Saved job/report, document metadata or inbox</text>
+      <text x="586" y="811" class="body">SSE gateway never mutates application records</text>
+    </g>
+  </g>
+  <g id="annotations">
+    <text x="32" y="42" class="title">From committed state to browser</text>
+    <text x="32" y="74" class="small">7 Read · durable owner state is authoritative; Valkey carries wake signals</text>
+    <text x="808" y="341" class="small">Owner-channel wake</text>
+    <text x="500" y="464" class="small">Wake</text>
+    <text x="274" y="341" class="small">Replay by revision</text>
+    <text x="274" y="624" class="small">SSE: change / ready / reset</text>
+    <text x="507" y="730" class="small">GET</text>
+    <text x="480" y="909" class="small">Saved state</text>
+    <text x="32" y="953" class="small">Initial/reconnect snapshots recover current state. Retention gaps emit reset; session revocation ends the stream.</text>
+    <text x="32" y="979" class="small">Admission and replay have bounded queues, per-owner socket caps and explicit 429/503 backpressure.</text>
+  </g>
+</svg>

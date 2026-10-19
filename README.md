@@ -7,8 +7,8 @@ Reviewers upload or reuse a résumé, set weighted requirements and receive a co
 ## One comparison, end to end
 
 1. **Submit:** React sends a PDF/TXT, pasted text or saved document ID with requirements and a retry key.
-2. **Accept:** Django reserves new document/job identity in PostgreSQL, stores the original, then atomically queues the job and its outbox. Reuse skips the new upload.
-3. **Relay:** a separate process publishes the committed job UUID and waits for broker confirmation.
+2. **Accept:** Django checks owner fairness and fresh processing supply, reserves new document/job identity, stores the original, then atomically queues the job and its outbox. Reuse skips the new upload; unchanged-key retries recover the existing job.
+3. **Relay:** a separate process drains committed UUIDs through a reused producer and waits for broker confirmation.
 4. **Queue:** RabbitMQ retains that UUID; document content stays out of messages.
 5. **Process:** a leased worker fetches and verifies the original, passes the malware gate, parses or reuses versioned extraction, and validates proposed evidence.
 6. **Save:** application code checks the current document/lease, calculates coverage and atomically commits one report, its completion notification and a durable change event.
@@ -16,15 +16,15 @@ Reviewers upload or reuse a résumé, set weighted requirements and receive a co
 
 A queued receipt confirms stored source and dispatch intent. A concurrent replay may instead return an **uploading** reservation: storage is not yet confirmed and interrupted uploads require unchanged-input retry. Neither receipt promises a completed report. Notifications persist across refresh and sign-out; they appear when the user returns to the app. [Admission and recovery →](docs/architecture.md)
 
-The delivery design targets **one million simultaneously connected users**, with durable replay, independent fan-out shards and bounded asynchronous gateways. This is a capacity target, not a measured result. [Transport, bounds and verification →](docs/decisions/0009-event-driven-completion.md). The detailed topology and AWS deployment references are being aligned with this runtime milestone.
+The same serving path starts small and scales through independent gateway/worker replicas and bounded shared services. **One million connected users and 100 comparisons/second are planning inputs.** A local 1,000-stream failure/recovery run and a real queued comparison passed; the full targets remain unmeasured. [Measured envelope and transport →](docs/decisions/0009-event-driven-completion.md) · [Deployment and admission bounds →](docs/decisions/0010-bounded-deployment.md)
 
 ## Original files and application records
 
-![Upload, storage, scan, processing, reuse and deletion boundaries.](https://raw.githubusercontent.com/junrillg/resume-match-bedrock/8aaace9d884240208ecd9d07bdfd8ace2b1c1271/docs/assets/document-lifecycle.svg)
+![Upload, storage, scan, processing, reuse and deletion boundaries.](docs/assets/document-lifecycle.svg)
 
 The local flow uses persistent SeaweedFS S3-compatible storage, ClamAV, PostgreSQL and RabbitMQ. Originals, extracted text and associated results follow the configurable **90-day** project policy. Owners can download clean originals, compare them again, reprocess them or request deletion. [Document lifecycle →](docs/document-lifecycle.md)
 
-The separate AWS Terraform design uses private S3, GuardDuty Malware Protection for S3, ECS/Fargate, RDS, Amazon MQ and Bedrock. Official-icon diagrams show their responsibilities. Local execution and mocked configuration checks do not establish AWS deployment or managed-service behavior. [AWS journey →](docs/aws-service-journey.md)
+The separate AWS Terraform design uses private S3, GuardDuty Malware Protection for S3, ECS/Fargate, RDS with RDS Proxy, Amazon MQ, private encrypted Valkey shards and Bedrock. Official-icon diagrams show their responsibilities. Local execution and mocked configuration checks do not establish AWS deployment or managed-service behavior. [AWS journey →](docs/aws-service-journey.md)
 
 ## Run with Docker
 

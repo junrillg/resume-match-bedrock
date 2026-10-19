@@ -4,6 +4,8 @@ Status: accepted and implemented in `17ba0eb`. Runtime access, permissions and
 synthetic processing are verified. Authenticated populated RabbitMQ, Flower and
 SeaweedFS views passed; pgAdmin final connection/record review remains pending.
 
+The current delivery extension adds a read-only Valkey viewer and stream tables under [ADR 0009](0009-event-driven-completion.md). The original inventory below records the earlier inspection milestone.
+
 ## Context
 
 OpenObserve connects safe lifecycle logs, but does not expose RabbitMQ backlog,

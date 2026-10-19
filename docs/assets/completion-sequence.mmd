@@ -1,28 +1,22 @@
 sequenceDiagram
-  participant UI as React browser
-  participant API as Django
-  participant DB as PostgreSQL
-  participant W as Worker / recovery
-  UI->>API: 1–2 POST /api/jobs/ + retry key
-  API->>DB: Reserve / store / finalize admission
-  API-->>UI: 202 queued + owned job ID
-  Note over UI: 7.1 /jobs/id · navigation stays available
-  Note over W: 3–5 dispatch + independent processing
-  W->>DB: 6 One transaction: outcome + completion notice
-  loop Visible / online, bounded nonoverlapping reads
-    UI->>API: 7.2 GET notifications/ + jobs/status
-    API->>DB: Owner-scoped persisted state
-    DB-->>API: Status / optional result / inbox
-    API-->>UI: JSON + unread count
+  accTitle: Nonblocking processing and completion
+  accDescr: A queued receipt opens a processing route without blocking navigation. Independent processing commits a report, notice and event. The relay, Valkey and ASGI delivery path signals an authorized read; only the same processing route advances.
+  participant UI as React
+  participant API as Django API
+  participant P as Worker + PostgreSQL
+  participant D as Event delivery
+  UI->>API: 1–2 Submit comparison
+  API-->>UI: 202 queued + job ID
+  UI->>UI: Open processing route<br/>Navigation stays available
+  P->>P: 6 Commit report + notice<br/>+ durable event
+  P->>D: 7a Pending owner revision
+  D->>D: 7b Relay → Valkey wake<br/>7c ASGI gateway → durable replay
+  D-->>UI: SSE IDs + revision
+  UI->>API: 7d Affected authorized reads
+  API-->>UI: Saved job / inbox / source state
+  alt Same active processing route
+    UI->>UI: Success → saved result
+  else Other route or draft
+    UI->>UI: Update inbox<br/>Preserve route / draft / focus
   end
-  alt Same processing route still active and success has a report
-    UI->>UI: 7.3 Replace route with /results/id
-  else User is elsewhere
-    Note over UI: Keep current page and draft, show saved notice
-    UI->>UI: Open saved notice: /results/id or /jobs/id
-    opt Separate Mark as read action
-      UI->>API: POST notification read acknowledgement
-      API-->>UI: Read receipt, result access independent
-    end
-  end
-  Note over UI,DB: Closed/offline browser catches up on return, in-app delivery
+  Note over UI,P: Closed browser recovers saved notices on next visit

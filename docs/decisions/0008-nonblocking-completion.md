@@ -1,6 +1,6 @@
 # ADR 0008: resumable processing and durable completion notifications
 
-Status: implemented and locally verified · 2026-10-19
+Status: processing/inbox behavior implemented; polling transport superseded by [ADR 0009](0009-event-driven-completion.md) · 2026-10-19
 
 ## Context
 

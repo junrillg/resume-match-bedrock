@@ -1,95 +1,17 @@
-sequenceDiagram
-    autonumber
-    actor User
-    participant React as React App.tsx
-    participant API as api.ts
-    participant Transport as nginx / Gunicorn / Django
-    participant View as views.jobs / admit_jobs
-    participant Source as read_match_form / read_source
-    participant DB as PostgreSQL
-    participant Store as SeaweedFS or S3
-    User->>React: Submit title, weighted requirements and source
-    React->>React: analyze(): preventDefault, submit-only pending state, validate size/type and duplicate skills
-    React->>React: Build FormData, hash file bytes or exact pasted text, or saved ID + reprocess
-    React->>React: Same browser fingerprint reuses UUID, changed payload gets new UUID
-    React->>API: api(jobs/, POST, FormData, Idempotency-Key)
-    Note over User,React: Navigation, history and sign out remain available during admission and processing
-    API->>Transport: POST /api/jobs/, same-origin cookie and CSRF header
-    Note over Transport: nginx body limit -> WSGI -> metadata/security/readiness/session/common/CSRF/auth middleware, URL resolution, CSRF process_view
-    Transport->>View: jobs(request) -> admit_jobs(request)
-    Note over View: jobs() maps DatabaseError to 503, auth 401, unsupported method 405, invalid UUID/input 400
-    View->>Source: read_match_form(request)
-    Source->>Source: Allowed and single fields, title, read_requirements(): skills/weights/uniqueness
-    alt Saved document selected
-        Source->>Source: Parse document UUID and reprocess true/false, reject mixed new input
-        Source-->>View: title, requirements, document_id, reprocess, None
-    else New file or pasted text
-        Source->>Source: read_source(): exactly one input, <=1 MiB, printable name, PDF prefix or UTF-8 TXT
-        Note over Source: TXT/paste call read_resume() for early validation, full PDF parsing waits for worker
-        Source-->>View: title, requirements, None, False, (original bytes, filename, content_type)
-    end
-    View->>View: Server SHA-256 of sorted JSON: title, requirements and source identity
-    Note over View: New identity = original-byte SHA-256 + content type, saved identity = document ID + reprocess
-    View->>DB: BEGIN Transaction A, lock owner row select_for_update()
-    opt Saved source
-        View->>DB: Lock document, require owner, PENDING/READY and unexpired
-        Note over View,DB: Unavailable saved source returns 404
-    end
-    View->>DB: Find Job by owner + idempotency_key
-    alt Existing key with different fingerprint
-        View-->>API: 409 conflict, no second admission
-    else Existing matching job not UPLOADING, or upload lease still active
-        View-->>API: 202 accepted_job(existing), no new quota charge
-    else New job or retryable matching UPLOADING reservation
-        opt New job
-            View->>DB: consume_bucket(): daily quota, 429 if exhausted
-            alt New original
-                View->>DB: Create UPLOADING Document, object_key originals/UUID and metadata
-                View->>DB: Create UPLOADING Job, resume_text is empty
-            else Saved original
-                View->>DB: Create QUEUED Job referencing document, create OutboxEvent
-            end
-        end
-        opt New original or resumable upload
-            View->>DB: Validate reservation deadline, acquire bounded upload lease UUID
-        end
-        View->>DB: COMMIT Transaction A
-        alt New original bytes
-            View->>Store: put_original() -> client().put_object(), bytes + type + ContentMD5
-            Note over View,Store: Network I/O occurs outside the SQL transaction
-            alt PUT unavailable
-                break Stop request after unavailable PUT
-                    View->>DB: Expire only matching upload lease
-                    View-->>API: 503, retry unchanged payload with same key
-                end
-            else PUT succeeds
-                View->>DB: BEGIN Transaction B, lock Document then Job
-                alt Deleted/rejected/missing comparison or lease no longer current
-                    break Stop this upload finalizer
-                        Note over View,DB: Preserve deletion intent for late PUT, commit transaction exit
-                        View-->>API: 409, or current 202 for a superseded lease, do not revive old state
-                    end
-                else Current valid upload lease
-                    View->>DB: Document PENDING, clear upload lease, Job QUEUED, reset scheduling times
-                    View->>DB: Create OutboxEvent, COMMIT Transaction B
-                end
-            end
-        else Saved original
-            Note over View,Store: No new object PUT, relay polls the committed outbox
-        end
-        View->>View: emit(job.accepted): telemetry only
-        View-->>API: accepted_job(): HTTP 202 job JSON, Location status endpoint, Retry-After 2
-    end
-    API-->>React: Receipt with processing_url and result_url when already succeeded
-    React->>React: Check session, deleted entity and navigation fences, merge current receipt
-    alt QUEUED or RUNNING, and user is still on the submitting form
-        React->>React: navigate(/jobs/UUID), release submission pending state
-    else Already SUCCEEDED, and still on submitting form
-        React->>React: navigate(/results/UUID)
-    else UPLOADING reservation
-        React->>React: Explain incomplete upload, retain draft/source and same-key retry
-    else User navigated while admission was in flight
-        React->>React: Preserve current route and draft, receipt remains in history
-    end
-    React->>React: Wake background monitoring without awaiting the worker
-    Note over React,DB: After outbox commit, relay/worker may run before browser receives 202, a lost response is safe to retry with the same key
+flowchart TB
+  accTitle: Logical admission, source reservation and atomic queueing
+  accDescr: Idempotency recovery precedes new-work limits. Original bytes are stored before queued dispatch intent is committed; object storage and PostgreSQL are independent boundaries.
+  FORM[1 App.analyze → api POST /api/jobs/] --> CHECK[2 Session / CSRF / input / owner checks]
+  CHECK --> LOCK[Lock owner stream; inspect retry identity]
+  LOCK --> EXIST{Existing unchanged key?}
+  EXIST -->|Recover; no new charge| RECEIPT[Return logical job state]
+  EXIST -->|No| SUPPLY{Owner fairness + fresh supply + finite budgets}
+  SUPPLY -->|Denied| ERR[429 / 503 + Retry-After]
+  SUPPLY -->|Allowed| RES[Reserve job + document + upload lease]
+  RES --> IO[Release DB; PUT private original]
+  IO --> FINAL[Lock owner stream → document → job]
+  FINAL --> COMMIT[Commit pending document + queued job + outbox + change]
+  COMMIT --> RECEIPT
+  CHECK -->|Owned saved source| REUSE[Same guards; skip upload]
+  REUSE --> COMMIT
+  IO -->|Interrupted| REC[Same-input retry or abandoned-upload cleanup]

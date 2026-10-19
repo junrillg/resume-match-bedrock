@@ -2,6 +2,8 @@
 
 Status: accepted for the service journey. Application-storage exclusion superseded by [ADR 0006](0006-durable-document-lifecycle.md).
 
+The original storage exclusion is superseded by [ADR 0006](0006-durable-document-lifecycle.md); the fan-out exclusion is superseded by [ADR 0009](0009-event-driven-completion.md) and [ADR 0010](0010-bounded-deployment.md).
+
 ## Context
 
 A reviewer needs the same submission, durable handoff and visible report across local
