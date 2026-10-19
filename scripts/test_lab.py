@@ -91,7 +91,7 @@ class PgAdminConfigurationTests(unittest.TestCase):
              patch("os.umask"), patch("os.execv") as launch:
             runpy.run_path(str(script))
         server = json.loads(files["/tmp/servers.json"])["Servers"]["1"]
-        self.assertEqual(server["ConnectionParameters"]["passfile"], "/var/lib/pgadmin/storage/lab_example.invalid/.pgpass")
+        self.assertEqual(server["ConnectionParameters"]["passfile"], ".pgpass")
         self.assertNotIn("PassFile", server)
         self.assertEqual(files["/tmp/pgpass"], "db:5432:synthetic_db:lab_viewer:synthetic\\:pass\\\\word\n")
         launch.assert_called_once_with("/entrypoint.sh", ["/entrypoint.sh"])
