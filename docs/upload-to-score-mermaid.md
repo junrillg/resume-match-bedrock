@@ -12,15 +12,22 @@ The execution maps trace original upload and saved-source reuse through admissio
 - Object PUT/GET, safety checks and provider calls occur outside their surrounding SQL critical sections. The diagrams show the relevant commit boundaries.
 - Local Compose uses PostgreSQL, RabbitMQ, Celery, SeaweedFS and ClamAV. The AWS configuration selects S3 and GuardDuty. Provider choices are `demo`, `bedrock-local` and `bedrock`; local S3 compatibility does not imply an AWS transfer.
 
+Each view includes a full-size vector image and its editable source. Open the SVG for detailed labels; the source index is folded below the maps.
+
 The numbered diagrams cover the application path and its failure, recovery, reuse, download and deletion boundaries. SDK/network internals, provisioning bodies and unrelated account administration are outside this execution view.
 
 ## 1. End-to-end overview
 
 Start here. Solid arrows show the application path; dotted arrows explain publisher confirmation and telemetry boundaries.
 
-[Editable Mermaid source](assets/upload-to-score-overview.mmd)
+[Open full-size SVG](assets/upload-to-score-overview.svg) · [Editable Mermaid source](assets/upload-to-score-overview.mmd)
 
-```mermaid
+![Complete document admission, processing and report-delivery flow](assets/upload-to-score-overview.svg)
+
+<details>
+<summary>Diagram source</summary>
+
+```text
 flowchart TB
     B["1. React App.analyze(): validate input, FormData, fingerprint and UUID"]
     H["2. api(): POST /api/jobs/ with CSRF, session cookie and Idempotency-Key"]
@@ -84,13 +91,20 @@ flowchart TB
     LIFE --> STORE
 ```
 
+</details>
+
 ## 2. Browser, validation, upload and acceptance
 
 New bytes use two SQL transactions with object PUT between them. Saved-source reuse queues inside the first transaction and skips PUT.
 
-[Editable Mermaid source](assets/upload-to-score-admission.mmd)
+[Open full-size SVG](assets/upload-to-score-admission.svg) · [Editable Mermaid source](assets/upload-to-score-admission.mmd)
 
-```mermaid
+![Browser validation, original storage and admission sequence](assets/upload-to-score-admission.svg)
+
+<details>
+<summary>Diagram source</summary>
+
+```text
 sequenceDiagram
     autonumber
     actor User
@@ -188,13 +202,20 @@ sequenceDiagram
     Note over React,DB: After outbox commit, relay/worker may run before browser receives 202, a lost response is safe to retry with the same key
 ```
 
+</details>
+
 ## 3. Durable dispatch, RabbitMQ and Celery
 
 RabbitMQ carries wakeups. PostgreSQL remains authoritative for whether a job may run and commit.
 
-[Editable Mermaid source](assets/upload-to-score-dispatch.mmd)
+[Open full-size SVG](assets/upload-to-score-dispatch.svg) · [Editable Mermaid source](assets/upload-to-score-dispatch.mmd)
 
-```mermaid
+![Durable outbox, RabbitMQ dispatch and worker-claim sequence](assets/upload-to-score-dispatch.svg)
+
+<details>
+<summary>Diagram source</summary>
+
+```text
 sequenceDiagram
     autonumber
     participant RelayLoop as relay_jobs.Command.handle
@@ -246,13 +267,20 @@ sequenceDiagram
     Note over RelayLoop,Celery: Heartbeat freshness proves the relay loop progressed, not that a particular publish or job succeeded
 ```
 
+</details>
+
 ## 4. Retrieval, safety, parsing, evidence and scoring
 
 Successful scanning and integrity checks precede parser-cache reuse. Every rejection/error branch stops that successful path.
 
-[Editable Mermaid source](assets/upload-to-score-worker.mmd)
+[Open full-size SVG](assets/upload-to-score-worker.svg) · [Editable Mermaid source](assets/upload-to-score-worker.mmd)
 
-```mermaid
+![Original retrieval, safety, evidence validation and atomic completion sequence](assets/upload-to-score-worker.svg)
+
+<details>
+<summary>Diagram source</summary>
+
+```text
 sequenceDiagram
     autonumber
     participant Job as run_job / finish_job
@@ -370,13 +398,20 @@ sequenceDiagram
     Note over Job,Provider: Bedrock supplies evidence, not the final score. Original bytes stay in object storage, cache/metadata stay in Document, report stays in Match, terminal outcomes and unread state stay in PostgreSQL
 ```
 
+</details>
+
 ## 5. Background reads, retries, recovery and original lifecycle
 
 These activities can overlap; they do not wait for a single linear browser-to-worker response.
 
-[Editable Mermaid source](assets/upload-to-score-recovery-lifecycle.mmd)
+[Open full-size SVG](assets/upload-to-score-recovery-lifecycle.svg) · [Editable Mermaid source](assets/upload-to-score-recovery-lifecycle.mmd)
 
-```mermaid
+![Independent background reads, retries, recovery and document lifecycle](assets/upload-to-score-recovery-lifecycle.svg)
+
+<details>
+<summary>Diagram source</summary>
+
+```text
 sequenceDiagram
     autonumber
     participant React as Background refresh / source controls
@@ -450,13 +485,20 @@ sequenceDiagram
     end
 ```
 
+</details>
+
 ## 6. Completion inbox and result navigation
 
 A completion record is part of the terminal transaction. Delivery is in-app: a connected browser discovers it in the background, and a returning user receives the same saved unread state. Opening a result and marking an update read are separate actions.
 
-[Editable Mermaid source](assets/upload-to-score-completion.mmd)
+[Open full-size SVG](assets/upload-to-score-completion.svg) · [Editable Mermaid source](assets/upload-to-score-completion.mmd)
 
-```mermaid
+![Durable completion inbox, result navigation and read acknowledgement](assets/upload-to-score-completion.svg)
+
+<details>
+<summary>Diagram source</summary>
+
+```text
 sequenceDiagram
     autonumber
     actor User
@@ -510,6 +552,8 @@ sequenceDiagram
     Note over React,View: Background failures retry with bounded backoff, focus/reconnect catches up. Authentication loss clears private client state
     Note over View,DB: Job/source deletion cascades notices, expiry hides notices before cleanup. Existing historical terminal jobs are not backfilled as unread
 ```
+
+</details>
 
 ## State and failure reference
 
@@ -680,4 +724,4 @@ Pinned links below resolve to the inspected application snapshot. The diagrams g
 
 ## Verification
 
-The execution maps and source anchors were refreshed against the pinned implementation. All six maps passed Mermaid 12.2.0 syntax parsing; each fenced map matches its adjacent editable `.mmd` source. These documentation checks do not establish live AWS behavior or hosted diagram rendering; release verification records those observations separately.
+All six Mermaid definitions passed Mermaid 12.2.0 parsing and were exported with Mermaid CLI 12.0.0 to SVGs containing native text. The folded sources match the adjacent `.mmd` files, and 121 immutable source anchors were checked against the implementation snapshot. Hosted image rendering is verified separately from these local exports.
