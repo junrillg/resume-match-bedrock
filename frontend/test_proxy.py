@@ -5,7 +5,7 @@ import subprocess
 import tempfile
 import time
 import unittest
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 import uuid
 
@@ -40,7 +40,8 @@ class ProxyTests(unittest.TestCase):
         if self.docker('inspect', '--format', '{{.State.Running}}', backend).stdout.strip() != 'true':
             self.fail(self.docker('logs', backend).stderr)
         env = ['-e', 'FRONTEND_API_UPSTREAM=127.0.0.1:8000',
-               '-e', 'FRONTEND_TRUST_ALB_PROTO=true'] if cloud else []
+               '-e', 'FRONTEND_TRUST_ALB_PROTO=true',
+               '-e', 'FRONTEND_EVENTS_TRANSPORT=alb'] if cloud else []
         self.addCleanup(lambda: self.docker('rm', '-f', web, check=False))
         self.docker('run', '-d', '--name', web, '--network', f'container:{backend}',
                     *env, self.image)
@@ -69,11 +70,20 @@ class ProxyTests(unittest.TestCase):
         self.assertEqual(self.request(url, 'https,http'), 'http')
         self.assertEqual(self.request(url, 'untrusted'), 'http')
 
+    def test_cloud_stream_route_fails_closed_without_compose_gateway_hosts(self):
+        url = self.proxy(cloud=True).replace('/api/test/', '/api/events/')
+        with self.assertRaises(HTTPError) as error:
+            urlopen(url, timeout=3)
+        self.assertEqual(error.exception.code, 404)
+        error.exception.close()
+
     def test_rejects_invalid_configuration_before_nginx(self):
         cases = [
             ('FRONTEND_API_UPSTREAM=api:8000; include /tmp/evil;',),
             ('FRONTEND_TRUST_ALB_PROTO=yes',),
             ('FRONTEND_TRUST_ALB_PROTO=true',),
+            ('FRONTEND_EVENTS_TRANSPORT=alb',),
+            ('FRONTEND_EVENTS_TRANSPORT=invalid',),
         ]
         for case in cases:
             with self.subTest(case=case):

@@ -14,7 +14,7 @@ from opentelemetry.sdk._logs import LoggerProvider
 from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
 from opentelemetry.sdk.resources import Resource
 
-EVENTS = {"delivery.persisted", "delivery.published", "delivery.publish_failed", "delivery.snapshot", "stream.snapshot","notification.persisted", "notification.read", "job.accepted", "job.published", "job.started", "job.retry", "job.succeeded",
+EVENTS = {"admission.snapshot", "delivery.persisted", "delivery.published", "delivery.publish_failed", "delivery.snapshot", "stream.snapshot","notification.persisted", "notification.read", "job.accepted", "job.published", "job.started", "job.retry", "job.succeeded",
           "job.failed", "job.recovered", "job.publish_failed", "job.interrupted", "provider.requested", "provider.responded", "provider.completed", "document.ready", "document.rejected", "document.delete_requested", "document.delete_pending", "document.deleted"}
 STAGES = {"api", "relay", "worker", "recovery", "provider", "gateway", "event-relay"}
 STATUSES = {"queued", "running", "succeeded", "failed", "confirmed", "unpublished", "interrupted", "ready", "rejected", "deleting", "deleted"}
@@ -81,7 +81,7 @@ def emit(event, **attributes):
         if type(value) is int and 0 <= value <= maximum:
             safe[key] = value
     for key in ("revision", "active_connections", "subscribed_owners", "db_active", "db_pending", "db_waiting", "threads",
-                "pending_events", "pending_capped", "oldest_pending_ms", "published_count", "errors", "overload", "delivery_lag_ms"):
+                "active_jobs", "queued_jobs", "oldest_queue_age_ms", "broker_ready", "worker_ready", "pending_events", "pending_capped", "oldest_pending_ms", "published_count", "errors", "overload", "delivery_lag_ms"):
         value = attributes.get(key)
         if type(value) is int and 0 <= value <= 9_007_199_254_740_991:
             safe[key] = value

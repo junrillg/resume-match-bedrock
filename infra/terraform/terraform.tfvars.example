@@ -17,3 +17,11 @@ bootstrap_completed = false
 enable_services     = false
 # Phase 2: set image_digests = { api = "sha256:<actual digest>", web = "sha256:<actual digest>" }
 # Phase 3: run the one-off bootstrap task; then set both booleans true after exit code 0.
+
+# Small initial profile; same event architecture supports larger reviewed inputs.
+# service_capacity, gateway_connections, fanout_shards and capacity_limits are validated.
+# These do not certify throughput or account quotas. Peak100 comparisons/s is a planning input.
+admission_rate_per_second = 2
+admission_max_active = 32
+owner_active_job_limit = 2
+queue_age_limit_seconds = 60

@@ -18,6 +18,16 @@ case "${FRONTEND_TRUST_ALB_PROTO:-false}" in
         ;;
     *) echo 'FRONTEND_TRUST_ALB_PROTO must be true or false' >&2; exit 1 ;;
 esac
+FRONTEND_EVENTS_TRANSPORT=${FRONTEND_EVENTS_TRANSPORT:-proxy}
+case "$FRONTEND_EVENTS_TRANSPORT" in
+    proxy) ;;
+    alb)
+        [ "$FRONTEND_API_UPSTREAM" = '127.0.0.1:8000' ] && [ "${FRONTEND_TRUST_ALB_PROTO:-false}" = true ] || {
+            echo 'ALB event routing requires the trusted co-located API configuration' >&2; exit 1;
+        }
+        ;;
+    *) echo 'FRONTEND_EVENTS_TRANSPORT must be proxy or alb' >&2; exit 1 ;;
+esac
 FRONTEND_EVENTS_UPSTREAM_A=${FRONTEND_EVENTS_UPSTREAM_A:-events-a:8001}
 FRONTEND_EVENTS_UPSTREAM_B=${FRONTEND_EVENTS_UPSTREAM_B:-'server events-b:8001 resolve;'}
 case "$FRONTEND_EVENTS_UPSTREAM_A:$FRONTEND_EVENTS_UPSTREAM_B" in
@@ -26,6 +36,21 @@ case "$FRONTEND_EVENTS_UPSTREAM_A:$FRONTEND_EVENTS_UPSTREAM_B" in
     *) echo 'Unsupported event gateway upstream configuration' >&2; exit 1 ;;
 esac
 export FRONTEND_API_UPSTREAM FRONTEND_DNS_RESOLVER FRONTEND_PROTO_RULE FRONTEND_EVENTS_UPSTREAM_A FRONTEND_EVENTS_UPSTREAM_B
+# In ECS, the exact ALB rule owns /api/events/. Never resolve Compose hosts
+# or send a missed stream route to WSGI. Keep the local proxy template intact.
+if [ "$FRONTEND_EVENTS_TRANSPORT" = alb ]; then
+    awk '
+        /^[[:space:]]*upstream event_gateway[[:space:]]*\{/ { skip=1; next }
+        /^[[:space:]]*location = \/api\/events\/[[:space:]]*\{/ {
+            print "        location = /api/events/ { return 404; }"; skip=1; next
+        }
+        skip && /^[[:space:]]*\}/ { skip=0; next }
+        !skip { print }
+    ' /etc/nginx/nginx.conf.template > /tmp/nginx-cloud.template
+    template=/tmp/nginx-cloud.template
+else
+    template=/etc/nginx/nginx.conf.template
+fi
 envsubst '${FRONTEND_API_UPSTREAM} ${FRONTEND_DNS_RESOLVER} ${FRONTEND_PROTO_RULE} ${FRONTEND_EVENTS_UPSTREAM_A} ${FRONTEND_EVENTS_UPSTREAM_B}' \
-    < /etc/nginx/nginx.conf.template > /tmp/nginx.conf
+    < "$template" > /tmp/nginx.conf
 exec nginx -c /tmp/nginx.conf "$@"

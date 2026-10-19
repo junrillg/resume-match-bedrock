@@ -1,6 +1,6 @@
 # ADR 0009: durable events and asynchronous browser delivery
 
-Status: local delivery implemented and verified; deployment wiring in progress · 2026-10-19
+Status: local delivery verified; deployment defined and mock-plan verified, not deployed · 2026-10-19
 
 ## Context
 

@@ -1,5 +1,11 @@
 mock_provider "aws" {
   override_during = plan
+  mock_resource "aws_elasticache_replication_group" {
+    defaults = { primary_endpoint_address = "fanout.example.invalid", member_clusters = ["fanout-001", "fanout-002"] }
+  }
+  mock_resource "aws_db_proxy" {
+    defaults = { endpoint = "proxy.example.invalid" }
+  }
   mock_resource "aws_vpc" {
     defaults = { id = "vpc-0123456789abcdef0" }
   }
@@ -155,7 +161,7 @@ run "staged_tasks_before_bootstrap" {
     image_digests = { api = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", web = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" }
   }
   assert {
-    condition     = length(aws_ecs_task_definition.service) == 4 && alltrue([for service in aws_ecs_service.main : service.desired_count == 0 && !service.network_configuration[0].assign_public_ip])
+    condition     = length(aws_ecs_task_definition.service) == 6 && alltrue([for service in aws_ecs_service.main : service.desired_count == 0 && !service.network_configuration[0].assign_public_ip])
     error_message = "Image publication defines tasks but must leave normal services stopped before bootstrap."
   }
   assert {
@@ -334,4 +340,173 @@ run "block_enable_when_scan_protection_is_not_active" {
     values          = { status = "WARNING" }
   }
   expect_failures = [aws_ecs_service.main]
+}
+
+override_resource {
+  target          = aws_secretsmanager_secret.app["django"]
+  override_during = plan
+  values          = { arn = "arn:aws:secretsmanager:us-east-1:111122223333:secret:app-django-AbCdEf" }
+}
+
+override_resource {
+  target          = aws_secretsmanager_secret.app["database"]
+  override_during = plan
+  values          = { arn = "arn:aws:secretsmanager:us-east-1:111122223333:secret:app-database-AbCdEf" }
+}
+
+override_resource {
+  target          = aws_secretsmanager_secret.app["broker"]
+  override_during = plan
+  values          = { arn = "arn:aws:secretsmanager:us-east-1:111122223333:secret:app-broker-AbCdEf" }
+}
+
+override_resource {
+  target          = aws_secretsmanager_secret.app["reviewer"]
+  override_during = plan
+  values          = { arn = "arn:aws:secretsmanager:us-east-1:111122223333:secret:app-reviewer-AbCdEf" }
+}
+
+override_resource {
+  target          = aws_secretsmanager_secret.fanout["gateway"]
+  override_during = plan
+  values          = { arn = "arn:aws:secretsmanager:us-east-1:111122223333:secret:fanout-gateway-AbCdEf" }
+}
+
+override_resource {
+  target          = aws_secretsmanager_secret.fanout["relay"]
+  override_during = plan
+  values          = { arn = "arn:aws:secretsmanager:us-east-1:111122223333:secret:fanout-relay-AbCdEf" }
+}
+
+override_resource {
+  target          = aws_secretsmanager_secret.proxy["app"]
+  override_during = plan
+  values          = { arn = "arn:aws:secretsmanager:us-east-1:111122223333:secret:proxy-app-AbCdEf" }
+}
+
+override_resource {
+  target          = aws_secretsmanager_secret.proxy["stream"]
+  override_during = plan
+  values          = { arn = "arn:aws:secretsmanager:us-east-1:111122223333:secret:proxy-stream-AbCdEf" }
+}
+
+run "event_delivery_small_profile" {
+  command = plan
+  variables {
+    image_digests       = { api = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", web = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" }
+    enable_services     = true
+    bootstrap_completed = true
+  }
+  assert {
+    condition     = length(aws_elasticache_replication_group.fanout) == 2 && alltrue([for shard in aws_elasticache_replication_group.fanout : shard.engine == "valkey" && shard.cluster_mode == "disabled" && shard.num_cache_clusters == 2 && shard.automatic_failover_enabled && shard.multi_az_enabled && shard.at_rest_encryption_enabled && shard.kms_key_id == aws_kms_key.main.arn && shard.transit_encryption_enabled && shard.transit_encryption_mode == "required" && toset(shard.user_group_ids) == toset([aws_elasticache_user_group.fanout.id])])
+    error_message = "Each independent owner shard requires private authenticated encrypted failover topology."
+  }
+  assert {
+    condition     = aws_elasticache_user_group.fanout.engine == "valkey" && toset(keys(aws_elasticache_user.fanout)) == toset(["gateway", "relay"]) && !strcontains(aws_elasticache_user.fanout["gateway"].access_string, "+@all") && !strcontains(aws_elasticache_user.fanout["relay"].access_string, "+eval") && !strcontains(aws_elasticache_user.fanout["relay"].access_string, "+subscribe") && toset(keys(aws_vpc_security_group_ingress_rule.fanout)) == toset(["gateway", "event-relay"])
+    error_message = "Fan-out must reject default/admin access and restrict relay commands and network roles."
+  }
+  assert {
+    condition     = one(one(aws_lb_listener_rule.events.condition).path_pattern).values == toset(["/api/events/"]) && aws_lb_listener_rule.events.action[0].target_group_arn == aws_lb_target_group.gateway.arn && aws_lb_target_group.gateway.port == 8001 && aws_lb_target_group.gateway.health_check[0].path == "/health/" && aws_lb.main.idle_timeout > 15 && aws_vpc_security_group_ingress_rule.gateway.from_port == 8001
+    error_message = "Only exact SSE traffic may enter the async gateway through the existing HTTPS ALB."
+  }
+  assert {
+    condition     = aws_ecs_service.main["gateway"].desired_count == 3 && aws_appautoscaling_target.service["gateway"].min_capacity == 3 && aws_appautoscaling_target.service["gateway"].max_capacity == 12 && jsondecode(aws_ecs_task_definition.service["gateway"].container_definitions)[0].portMappings[0].containerPort == 8001 && join(" ", local.commands["event-relay"]) == "python manage.py relay_events" && contains(local.commands["gateway"], "event_gateway:application")
+    error_message = "Start small while running the same independent ASGI gateway and durable event relay."
+  }
+  assert {
+    condition     = local.role_environment["gateway"].STREAM_REDIS_HOSTS == local.fanout_hosts && local.role_environment["event-relay"].STREAM_REDIS_HOSTS == local.fanout_hosts && local.role_environment["gateway"].STREAM_REDIS_USERNAME == "gateway" && local.role_environment["event-relay"].STREAM_REDIS_USERNAME == "relay" && local.role_environment["gateway"].STREAM_REDIS_TLS == "true" && local.role_environment["gateway"].DELIVERY_CLOUD_METRICS == "true"
+    error_message = "Publisher and every gateway need the same ordered map, scoped identities, TLS and actual EMF emission."
+  }
+  assert {
+    condition     = local.role_environment["gateway"].POSTGRES_USER == "resume_stream" && local.role_environment["gateway"].POSTGRES_HOST == aws_db_proxy.main.endpoint && local.role_environment["app"].POSTGRES_HOST == aws_db_proxy.main.endpoint && local.role_environment["bootstrap"].POSTGRES_HOST == aws_db_instance.main.address && local.role_environment["gateway"].POSTGRES_PROXY_MODE == "true" && local.role_environment["bootstrap"].POSTGRES_PROXY_MODE == "false" && local.role_environment["gateway"].POSTGRES_SSLROOTCERT == "/app/certs/amazon-trust-services.pem" && local.role_environment["bootstrap"].POSTGRES_SSLROOTCERT == "/app/certs/rds-global-bundle.pem"
+    error_message = "Gateway/app use proxy-specific verified TLS while bootstrap remains direct and credential-isolated."
+  }
+  assert {
+    condition     = aws_db_proxy.main.require_tls && aws_db_proxy.main.engine_family == "POSTGRESQL" && length(aws_db_proxy.main.auth) == 2 && aws_db_proxy_default_target_group.main.connection_pool_config[0].connection_borrow_timeout == 2 && aws_db_proxy_target.main.db_instance_identifier == aws_db_instance.main.identifier && toset(keys(aws_vpc_security_group_ingress_rule.database)) == toset(["bootstrap"])
+    error_message = "Only bootstrap may bypass the private bounded proxy; both database identities need its scoped authentication."
+  }
+  assert {
+    condition     = jsondecode(aws_secretsmanager_secret_version.proxy["app"].secret_string).username == "resume_app" && jsondecode(aws_secretsmanager_secret_version.proxy["stream"].secret_string).username == "resume_stream" && toset(local.secret_access["gateway"]) == toset([aws_secretsmanager_secret.app["django"].arn, aws_secretsmanager_secret.proxy["stream"].arn, aws_secretsmanager_secret.fanout["gateway"].arn]) && !strcontains(aws_iam_role_policy.execution["gateway"].policy, aws_secretsmanager_secret.app["database"].arn) && !strcontains(aws_iam_role_policy.execution["event-relay"].policy, aws_secretsmanager_secret.app["broker"].arn) && !contains(keys(aws_iam_role_policy.documents), "gateway") && !contains(keys(aws_iam_role_policy.documents), "event-relay")
+    error_message = "Credential JSON and execution policies must preserve read-only gateway and broker/source isolation."
+  }
+  assert {
+    condition     = aws_appautoscaling_policy.connections["gateway"].target_tracking_scaling_policy_configuration[0].customized_metric_specification[0].metric_name == "ConnectedStreams" && aws_appautoscaling_policy.connections["gateway"].target_tracking_scaling_policy_configuration[0].customized_metric_specification[0].statistic == "Average" && aws_appautoscaling_policy.connections["gateway"].target_tracking_scaling_policy_configuration[0].target_value == 1400 && length(aws_appautoscaling_policy.utilization) == 6 && alltrue([for alarm in aws_cloudwatch_metric_alarm.fanout : alarm.dimensions.CacheNodeId == "0001"]) && length(aws_cloudwatch_query_definition.journey.log_group_names) == 5 && alltrue([for alarm in aws_cloudwatch_metric_alarm.proxy : alarm.dimensions.ProxyName == aws_db_proxy.main.name && length(alarm.dimensions) == 1]) && aws_cloudwatch_metric_alarm.admission_queue_age.threshold == var.queue_age_limit_seconds * 1000 && aws_cloudwatch_log_metric_filter.admission_queue_age.metric_transformation[0].value == "$.oldest_queue_age_ms" && local.rollout_vcpu <= var.capacity_limits.fargate_vcpu && alltrue([for subnet in aws_subnet.private : endswith(subnet.cidr_block, "/20")])
+    error_message = "Small actual limits need connection/CPU/memory scaling and enough private address/rollout headroom."
+  }
+  assert {
+    condition     = alltrue([for secret in local.api_containers["gateway"].secrets : secret.name != "RABBITMQ_PASSWORD" && secret.name != "RDS_MASTER_PASSWORD" && secret.name != "CLOUD_REVIEWER_PASSWORD"]) && one([for item in local.web_container.environment : item.value if item.name == "FRONTEND_EVENTS_TRANSPORT"]) == "alb"
+    error_message = "Cloud nginx must delegate events to ALB and gateway must receive no privileged/broker credentials."
+  }
+}
+run "disabled_scaling_stops_services" {
+  command = plan
+  variables {
+    image_digests = { api = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", web = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" }
+  }
+  assert {
+    condition     = alltrue([for target in aws_appautoscaling_target.service : target.min_capacity == 0 && target.max_capacity == 0 && target.suspended_state[0].dynamic_scaling_out_suspended])
+    error_message = "Disabling must clamp even an already autoscaled service to zero instead of ignoring desired-count drift."
+  }
+}
+run "reject_insufficient_rollout_budget" {
+  command = plan
+  variables {
+    capacity_limits = { alb_targets = 10, target_group_targets = 10, fargate_vcpu = 64, proxy_clients = 512, database_backends = 256 }
+  }
+  expect_failures = [terraform_data.capacity]
+}
+run "reject_insufficient_database_budget" {
+  command = plan
+  variables {
+    capacity_limits = { alb_targets = 1000, target_group_targets = 1000, fargate_vcpu = 64, proxy_clients = 32, database_backends = 100 }
+  }
+  expect_failures = [terraform_data.capacity]
+}
+run "reject_too_small_vpc" {
+  command = plan
+  variables { vpc_cidr = "10.42.0.0/20" }
+  expect_failures = [var.vpc_cidr]
+}
+run "large_configuration_arithmetic_only" {
+  command = plan
+  variables {
+    service_capacity = {
+      app         = { min = 2, max = 12 }
+      worker      = { min = 2, max = 12 }
+      relay       = { min = 1, max = 1 }
+      gateway     = { min = 1074, max = 1074 }
+      event-relay = { min = 1, max = 1 }
+    }
+    capacity_limits = { alb_targets = 3000, target_group_targets = 3000, fargate_vcpu = 1200, proxy_clients = 10000, database_backends = 256 }
+  }
+  assert {
+    condition     = local.gateway_rollout_targets == 2148 && local.proxy_rollout_clients < 10000 && length(aws_ecs_service.main) == 0
+    error_message = "Large inputs exercise the same finite budget model without starting resources or claiming measured capacity."
+  }
+}
+
+override_resource {
+  target          = aws_elasticache_user_group.fanout
+  override_during = plan
+  values          = { id = "resume-match-fanout" }
+}
+override_resource {
+  target          = aws_lb_target_group.gateway
+  override_during = plan
+  values          = { arn = "arn:aws:elasticloadbalancing:us-east-1:111122223333:targetgroup/resume-match-events/1234567890123456" }
+}
+
+run "reject_insufficient_private_addresses" {
+  command = plan
+  variables {
+    service_capacity = {
+      app         = { min = 2, max = 12 }
+      worker      = { min = 2, max = 12 }
+      relay       = { min = 1, max = 1 }
+      gateway     = { min = 3, max = 5000 }
+      event-relay = { min = 1, max = 1 }
+    }
+    capacity_limits = { alb_targets = 20000, target_group_targets = 20000, fargate_vcpu = 10000, proxy_clients = 50000, database_backends = 256 }
+  }
+  expect_failures = [terraform_data.capacity]
 }

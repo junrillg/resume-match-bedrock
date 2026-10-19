@@ -38,6 +38,14 @@ class MemoryStorage:
 class StorageBoundaryMixin:
     def setUp(self):
         super().setUp()
+        from django.utils import timezone
+        from .models import AdmissionHealth
+        # API/storage tests isolate their own boundary from supply/rate policy;
+        # dedicated admission tests exercise actual conservative bounds below.
+        AdmissionHealth.objects.update_or_create(pk="jobs", defaults={"sampled_at": timezone.now(), "broker_ready": True, "worker_ready": True})
+        policy = override_settings(GLOBAL_ADMISSION_PER_SECOND=1000, GLOBAL_ADMISSION_MAX_ACTIVE=1000, OWNER_ACTIVE_JOB_LIMIT=1000)
+        policy.enable()
+        self.addCleanup(policy.disable)
         self.storage = MemoryStorage()
         storage_patch = patch("matching.documents.client", return_value=self.storage)
         scanner_patch = patch("matching.documents.scan_bytes")

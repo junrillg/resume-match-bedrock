@@ -9,7 +9,7 @@ from .management.commands.bootstrap_cloud_db import Command
 
 
 DATABASE = {"default": {"ENGINE": "django.db.backends.postgresql", "HOST": "db.example.invalid", "PORT": "5432", "NAME": "resume_match", "USER": "resume_app", "PASSWORD": "app-secret-" * 4, "OPTIONS": {"sslmode": "verify-full", "sslrootcert": "/app/certs/rds-global-bundle.pem"}}}
-ENVIRONMENT = {"RDS_MASTER_USERNAME": "admin", "RDS_MASTER_PASSWORD": "master-secret-" * 3, "CLOUD_REVIEWER_USERNAME": "reviewer", "CLOUD_REVIEWER_PASSWORD": "reviewer-secret-" * 3}
+ENVIRONMENT = {"RDS_MASTER_USERNAME": "admin", "RDS_MASTER_PASSWORD": "master-secret-" * 3, "STREAM_DB_PASSWORD": "stream-secret-" * 3, "CLOUD_REVIEWER_USERNAME": "reviewer", "CLOUD_REVIEWER_PASSWORD": "reviewer-secret-" * 3}
 
 
 @override_settings(DEBUG=False, DATABASES=DATABASE)
@@ -17,9 +17,9 @@ ENVIRONMENT = {"RDS_MASTER_USERNAME": "admin", "RDS_MASTER_PASSWORD": "master-se
 class CloudBootstrapTests(SimpleTestCase):
     def run_bootstrap(self, *, existing_role=None, membership=None, existing_user=False, failure=None):
         output = StringIO()
-        with patch("matching.management.commands.bootstrap_cloud_db.psycopg.connect") as connect, patch("matching.management.commands.bootstrap_cloud_db.call_command") as migrate, patch("matching.management.commands.bootstrap_cloud_db.connections.close_all"), patch("matching.management.commands.bootstrap_cloud_db.get_user_model") as model:
+        with patch("matching.management.commands.bootstrap_cloud_db.psycopg.connect") as connect, patch("matching.management.commands.bootstrap_cloud_db.call_command") as migrate, patch("matching.management.commands.bootstrap_cloud_db.ensure_runtime_owner"), patch("matching.management.commands.bootstrap_cloud_db.migration_connection"), patch("matching.management.commands.bootstrap_cloud_db.connections.close_all"), patch("matching.management.commands.bootstrap_cloud_db.get_user_model") as model:
             cursor = connect.return_value.__enter__.return_value.cursor.return_value.__enter__.return_value
-            cursor.fetchone.side_effect = [existing_role, membership]
+            cursor.fetchone.side_effect = [existing_role, membership, None, None, None, None, None, None]
             if failure:
                 connect.side_effect = failure
             model.return_value.objects.filter.return_value.exists.return_value = existing_user
@@ -30,7 +30,7 @@ class CloudBootstrapTests(SimpleTestCase):
     def test_creates_restricted_role_then_migrates_as_application(self):
         connect, cursor, migrate, model, output = self.run_bootstrap()
         self.assertEqual(connect.call_args.kwargs["sslmode"], "verify-full")
-        self.assertEqual(connect.call_args.kwargs["user"], "admin")
+        self.assertEqual(connect.call_args_list[0].kwargs["user"], "admin")
         self.assertEqual(cursor.execute.call_args_list[2].args[1], (DATABASE["default"]["PASSWORD"],))
         statement = str(cursor.execute.call_args_list[2].args[0])
         self.assertIn("NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS", statement)
@@ -42,6 +42,7 @@ class CloudBootstrapTests(SimpleTestCase):
     def test_existing_reviewer_password_is_not_reset(self):
         _, cursor, _, model, _ = self.run_bootstrap(existing_role=(False,) * 5, existing_user=True)
         self.assertIn("ALTER ROLE", str(cursor.execute.call_args_list[2].args[0]))
+        self.assertNotIn("PASSWORD", str(cursor.execute.call_args_list[2].args[0]))
         self.assertNotIn("NOSUPERUSER", str(cursor.execute.call_args_list[2].args[0]))
         model.return_value.objects.create_user.assert_not_called()
 
@@ -61,3 +62,42 @@ class CloudBootstrapTests(SimpleTestCase):
         with patch("matching.management.commands.bootstrap_cloud_db.psycopg.connect") as connect, self.assertRaisesMessage(CommandError, "requires production settings"):
             Command().handle()
         connect.assert_not_called()
+
+
+class MigrationConnectionSafetyTests(SimpleTestCase):
+    def test_failure_restores_connection_configuration_without_retaining_master_password(self):
+        from .management.commands.bootstrap_cloud_db import migration_connection
+        original={"ENGINE":"django.db.backends.postgresql","USER":"resume_app","PASSWORD":"synthetic-app","OPTIONS":{"sslmode":"verify-full"}}
+        wrapper=MagicMock()
+        wrapper.settings_dict=original
+        manager=MagicMock()
+        manager.__getitem__.return_value=wrapper
+        manager.databases={"default":original}
+        with patch("matching.management.commands.bootstrap_cloud_db.connections",manager):
+            with self.assertRaisesMessage(RuntimeError,"synthetic migration failure"):
+                with migration_connection(original,"bootstrap","synthetic-master"):
+                    self.assertEqual(wrapper.settings_dict["USER"],"bootstrap")
+                    self.assertEqual(wrapper.settings_dict["OPTIONS"]["assume_role"],"resume_owner")
+                    raise RuntimeError("synthetic migration failure")
+        self.assertIs(wrapper.settings_dict,original)
+        self.assertIs(manager.databases["default"],original)
+        self.assertNotIn("assume_role",original["OPTIONS"])
+        self.assertEqual(wrapper.close.call_count,2)
+
+
+    def test_close_failure_still_restores_configuration(self):
+        from .management.commands.bootstrap_cloud_db import migration_connection
+        original={"ENGINE":"django.db.backends.postgresql","USER":"resume_app","PASSWORD":"synthetic-app","OPTIONS":{}}
+        wrapper=MagicMock()
+        wrapper.settings_dict=original
+        wrapper.close.side_effect=[None,RuntimeError("synthetic close failure")]
+        manager=MagicMock()
+        manager.__getitem__.return_value=wrapper
+        manager.databases={"default":original}
+        with patch("matching.management.commands.bootstrap_cloud_db.connections",manager):
+            with self.assertRaisesMessage(RuntimeError,"synthetic close failure"):
+                with migration_connection(original,"bootstrap","synthetic-master"):
+                    pass
+        self.assertIs(wrapper.settings_dict,original)
+        self.assertIs(manager.databases["default"],original)
+        self.assertEqual(original["USER"],"resume_app")

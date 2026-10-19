@@ -4,10 +4,12 @@ locals {
     Condition = { StringEquals = { "aws:SourceAccount" = var.account_id }, ArnLike = { "aws:SourceArn" = "arn:aws:ecs:${var.region}:${var.account_id}:*" } }
   }] })
   secret_access = {
-    app       = [aws_secretsmanager_secret.app["django"].arn, aws_secretsmanager_secret.app["database"].arn]
-    relay     = [aws_secretsmanager_secret.app["django"].arn, aws_secretsmanager_secret.app["database"].arn, aws_secretsmanager_secret.app["broker"].arn]
-    worker    = [aws_secretsmanager_secret.app["django"].arn, aws_secretsmanager_secret.app["database"].arn, aws_secretsmanager_secret.app["broker"].arn]
-    bootstrap = [aws_secretsmanager_secret.app["django"].arn, aws_secretsmanager_secret.app["database"].arn, aws_secretsmanager_secret.app["reviewer"].arn, aws_db_instance.main.master_user_secret[0].secret_arn]
+    app         = [aws_secretsmanager_secret.app["django"].arn, aws_secretsmanager_secret.app["database"].arn]
+    relay       = [aws_secretsmanager_secret.app["django"].arn, aws_secretsmanager_secret.app["database"].arn, aws_secretsmanager_secret.app["broker"].arn]
+    worker      = [aws_secretsmanager_secret.app["django"].arn, aws_secretsmanager_secret.app["database"].arn, aws_secretsmanager_secret.app["broker"].arn]
+    bootstrap   = [aws_secretsmanager_secret.app["django"].arn, aws_secretsmanager_secret.app["database"].arn, aws_secretsmanager_secret.app["reviewer"].arn, aws_db_instance.main.master_user_secret[0].secret_arn, aws_secretsmanager_secret.proxy["stream"].arn]
+    gateway     = [aws_secretsmanager_secret.app["django"].arn, aws_secretsmanager_secret.proxy["stream"].arn, aws_secretsmanager_secret.fanout["gateway"].arn]
+    event-relay = [aws_secretsmanager_secret.app["django"].arn, aws_secretsmanager_secret.app["database"].arn, aws_secretsmanager_secret.fanout["relay"].arn]
   }
 }
 resource "aws_iam_role" "execution" {
@@ -21,7 +23,7 @@ resource "aws_iam_role_policy" "execution" {
   role     = aws_iam_role.execution[each.key].id
   policy = jsonencode({ Version = "2012-10-17", Statement = [
     { Effect = "Allow", Action = ["ecr:GetAuthorizationToken"], Resource = "*" },
-    { Effect = "Allow", Action = ["ecr:BatchCheckLayerAvailability", "ecr:GetDownloadUrlForLayer", "ecr:BatchGetImage"], Resource = [for repo in aws_ecr_repository.image : repo.arn] },
+    { Effect = "Allow", Action = ["ecr:BatchCheckLayerAvailability", "ecr:GetDownloadUrlForLayer", "ecr:BatchGetImage"], Resource = each.key == "app" ? [aws_ecr_repository.image["api"].arn, aws_ecr_repository.image["web"].arn] : [aws_ecr_repository.image["api"].arn] },
     { Effect = "Allow", Action = ["logs:CreateLogStream", "logs:PutLogEvents"], Resource = "${aws_cloudwatch_log_group.service[each.key].arn}:*" },
     { Effect = "Allow", Action = ["secretsmanager:GetSecretValue"], Resource = local.secret_access[each.key] },
     { Effect    = "Allow", Action = ["kms:Decrypt"], Resource = aws_kms_key.main.arn,

@@ -1,6 +1,7 @@
 locals {
-  zones = { for index, az in var.availability_zones : az => index }
-  roles = toset(["app", "relay", "worker", "bootstrap"])
+  zones      = { for index, az in var.availability_zones : az => index }
+  roles      = toset(["app", "relay", "worker", "bootstrap", "gateway", "event-relay"])
+  vpc_prefix = tonumber(split("/", var.vpc_cidr)[1])
 }
 resource "aws_vpc" "main" {
   cidr_block           = var.vpc_cidr
@@ -14,13 +15,13 @@ resource "aws_subnet" "public" {
   for_each          = local.zones
   vpc_id            = aws_vpc.main.id
   availability_zone = each.key
-  cidr_block        = cidrsubnet(var.vpc_cidr, 8, each.value)
+  cidr_block        = cidrsubnet(var.vpc_cidr, 24 - local.vpc_prefix, each.value)
 }
 resource "aws_subnet" "private" {
   for_each          = local.zones
   vpc_id            = aws_vpc.main.id
   availability_zone = each.key
-  cidr_block        = cidrsubnet(var.vpc_cidr, 8, each.value + 10)
+  cidr_block        = cidrsubnet(var.vpc_cidr, 20 - local.vpc_prefix, each.value + 1)
 }
 resource "aws_route_table" "public" {
   vpc_id = aws_vpc.main.id
@@ -89,7 +90,7 @@ resource "aws_vpc_security_group_egress_rule" "alb_web" {
   to_port                      = 8080
 }
 resource "aws_vpc_security_group_ingress_rule" "database" {
-  for_each                     = local.roles
+  for_each                     = toset(["bootstrap"])
   security_group_id            = aws_security_group.database.id
   referenced_security_group_id = aws_security_group.task[each.key].id
   ip_protocol                  = "tcp"
@@ -97,7 +98,7 @@ resource "aws_vpc_security_group_ingress_rule" "database" {
   to_port                      = 5432
 }
 resource "aws_vpc_security_group_egress_rule" "database" {
-  for_each                     = local.roles
+  for_each                     = toset(["bootstrap"])
   security_group_id            = aws_security_group.task[each.key].id
   referenced_security_group_id = aws_security_group.database.id
   ip_protocol                  = "tcp"

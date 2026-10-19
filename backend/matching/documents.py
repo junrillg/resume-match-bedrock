@@ -170,6 +170,8 @@ def document_text(claim):
     if document is None:
         raise DocumentError()
     try:
+        from .admission import release_database
+        release_database()
         data = get_original(document)
         if document.parser_version == PARSER_VERSION and document.extracted_text and not claim.reprocess:
             text = document.extracted_text
@@ -247,6 +249,8 @@ def reconcile_documents(limit=100):
     for document_id in list(candidates):
         document = Document.objects.get(pk=document_id)
         try:
+            from .admission import release_database
+            release_database()
             client().delete_object(Bucket=settings.DOCUMENT_BUCKET, Key=document.object_key)
         except (BotoCoreError, ClientError):
             emit("document.delete_pending", document_id=document.id, stage="recovery", status="deleting")

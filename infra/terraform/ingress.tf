@@ -64,3 +64,46 @@ resource "aws_route53_record" "app" {
     evaluate_target_health = true
   }
 }
+
+resource "aws_lb_target_group" "gateway" {
+  name                          = "${var.name}-events"
+  port                          = 8001
+  protocol                      = "HTTP"
+  target_type                   = "ip"
+  vpc_id                        = aws_vpc.main.id
+  deregistration_delay          = 30
+  load_balancing_algorithm_type = "least_outstanding_requests"
+  health_check {
+    path                = "/health/"
+    matcher             = "200"
+    interval            = 30
+    timeout             = 5
+    healthy_threshold   = 2
+    unhealthy_threshold = 3
+  }
+}
+resource "aws_lb_listener_rule" "events" {
+  listener_arn = aws_lb_listener.https.arn
+  priority     = 10
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.gateway.arn
+  }
+  condition {
+    path_pattern { values = ["/api/events/"] }
+  }
+}
+resource "aws_vpc_security_group_ingress_rule" "gateway" {
+  security_group_id            = aws_security_group.task["gateway"].id
+  referenced_security_group_id = aws_security_group.alb.id
+  ip_protocol                  = "tcp"
+  from_port                    = 8001
+  to_port                      = 8001
+}
+resource "aws_vpc_security_group_egress_rule" "alb_gateway" {
+  security_group_id            = aws_security_group.alb.id
+  referenced_security_group_id = aws_security_group.task["gateway"].id
+  ip_protocol                  = "tcp"
+  from_port                    = 8001
+  to_port                      = 8001
+}

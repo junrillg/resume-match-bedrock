@@ -23,6 +23,7 @@ MIDDLEWARE = [
 ]
 ROOT_URLCONF = "config.urls"
 WSGI_APPLICATION = "config.wsgi.application"
+POSTGRES_PROXY_MODE = os.getenv("POSTGRES_PROXY_MODE", "false").lower() == "true"
 if os.getenv("POSTGRES_HOST"):
     DATABASES = {"default": {
         "ENGINE": "django.db.backends.postgresql",
@@ -31,10 +32,13 @@ if os.getenv("POSTGRES_HOST"):
         "NAME": os.environ["POSTGRES_DB"],
         "USER": os.environ["POSTGRES_USER"],
         "PASSWORD": os.environ["POSTGRES_PASSWORD"],
-        "CONN_MAX_AGE": 60,
+        "CONN_MAX_AGE": 0 if POSTGRES_PROXY_MODE else 60,
         "CONN_HEALTH_CHECKS": True,
         "OPTIONS": {"connect_timeout": 3},
     }}
+    if POSTGRES_PROXY_MODE:
+        DATABASES["default"]["DISABLE_SERVER_SIDE_CURSORS"] = True
+        DATABASES["default"]["OPTIONS"]["prepare_threshold"] = None
     if os.getenv("POSTGRES_SSLMODE"):
         if os.environ["POSTGRES_SSLMODE"] != "verify-full" or not os.getenv("POSTGRES_SSLROOTCERT"):
             raise ImproperlyConfigured("Database TLS requires verify-full and POSTGRES_SSLROOTCERT.")
@@ -187,5 +191,25 @@ if os.getenv("STREAM_GATEWAY_PROCESS", "false").lower() == "true" and DATABASES[
     DATABASES["default"]["DISABLE_SERVER_SIDE_CURSORS"] = True
     DATABASES["default"]["OPTIONS"].update(
         pool={"min_size": 0, "max_size": STREAM_DB_WORKERS, "timeout": 2, "max_waiting": STREAM_DB_QUEUE},
-        options="-c statement_timeout=3000 -c lock_timeout=1000",
     )
+
+    if not POSTGRES_PROXY_MODE:
+        DATABASES["default"]["OPTIONS"]["options"] = "-c statement_timeout=3000 -c lock_timeout=1000"
+
+# Conservative starting supply limits; these are not throughput certification.
+GLOBAL_ADMISSION_PER_SECOND = int(os.getenv("GLOBAL_ADMISSION_PER_SECOND", "2"))
+GLOBAL_ADMISSION_MAX_ACTIVE = int(os.getenv("GLOBAL_ADMISSION_MAX_ACTIVE", "32"))
+OWNER_ACTIVE_JOB_LIMIT = int(os.getenv("OWNER_ACTIVE_JOB_LIMIT", "2"))
+QUEUE_AGE_LIMIT_SECONDS = int(os.getenv("QUEUE_AGE_LIMIT_SECONDS", "60"))
+ADMISSION_HEALTH_MAX_AGE_SECONDS = int(os.getenv("ADMISSION_HEALTH_MAX_AGE_SECONDS", "15"))
+RELAY_BATCH_SIZE = int(os.getenv("RELAY_BATCH_SIZE", "100"))
+RELAY_PRODUCTIVE_DELAY_SECONDS = float(os.getenv("RELAY_PRODUCTIVE_DELAY_SECONDS", "0"))
+RELAY_IDLE_DELAY_SECONDS = float(os.getenv("RELAY_IDLE_DELAY_SECONDS", "0.5"))
+RELAY_MAINTENANCE_INTERVAL_SECONDS = float(os.getenv("RELAY_MAINTENANCE_INTERVAL_SECONDS", "2"))
+RELAY_MAINTENANCE_BATCH_SIZE = int(os.getenv("RELAY_MAINTENANCE_BATCH_SIZE", "20"))
+if any(value < 1 for value in (GLOBAL_ADMISSION_PER_SECOND, GLOBAL_ADMISSION_MAX_ACTIVE,
+        OWNER_ACTIVE_JOB_LIMIT, QUEUE_AGE_LIMIT_SECONDS, ADMISSION_HEALTH_MAX_AGE_SECONDS,
+        RELAY_BATCH_SIZE, RELAY_MAINTENANCE_BATCH_SIZE)) or not (
+        0 <= RELAY_PRODUCTIVE_DELAY_SECONDS <= 5 and 0.05 <= RELAY_IDLE_DELAY_SECONDS <= 5
+        and 0.1 <= RELAY_MAINTENANCE_INTERVAL_SECONDS <= 60):
+    raise ImproperlyConfigured("Admission and relay bounds must be positive and finite.")

@@ -94,6 +94,35 @@ class CloudConfigurationTests(SimpleTestCase):
         self.assertEqual(config["SECURE_PROXY_SSL_HEADER"], ("HTTP_X_FORWARDED_PROTO", "https"))
         self.assertNotIn("SECURE_PROXY_SSL_HEADER", self.load())
 
+    def test_proxy_parameters_keep_transactions_multiplexable_and_preserve_tls(self):
+        config = self.load(POSTGRES_PROXY_MODE="true", STREAM_GATEWAY_PROCESS="true",
+            POSTGRES_HOST="proxy.example.invalid", POSTGRES_DB="app", POSTGRES_USER="resume_stream",
+            POSTGRES_PASSWORD="synthetic", POSTGRES_SSLMODE="verify-full",
+            POSTGRES_SSLROOTCERT="/app/certs/amazon-trust-services.pem")
+        db = config["DATABASES"]["default"]
+        self.assertEqual(db["CONN_MAX_AGE"], 0)
+        self.assertTrue(db["DISABLE_SERVER_SIDE_CURSORS"])
+        self.assertIsNone(db["OPTIONS"]["prepare_threshold"])
+        self.assertNotIn("options", db["OPTIONS"])
+        self.assertNotIn("assume_role", db["OPTIONS"])
+        self.assertEqual(db["OPTIONS"]["sslmode"], "verify-full")
+        self.assertEqual(db["OPTIONS"]["pool"]["max_size"],4)
+
+    def test_proxy_trust_rejects_direct_rds_authority_and_recognizes_five_ats_roots(self):
+        import subprocess
+        import tempfile
+        certs = Path(__file__).resolve().parents[1] / "certs"
+        ats = certs / "amazon-trust-services.pem"
+        self.assertEqual(ssl.create_default_context(cafile=str(ats)).cert_store_stats()["x509_ca"], 5)
+        root = ats.read_text().split("-----END CERTIFICATE-----")[0] + "-----END CERTIFICATE-----\n"
+        with tempfile.NamedTemporaryFile(mode="w",suffix=".pem") as candidate:
+            candidate.write(root)
+            candidate.flush()
+            accepted = subprocess.run(["openssl","verify","-no-CApath","-no-CAstore","-CAfile",str(ats),candidate.name], capture_output=True)
+            wrong = subprocess.run(["openssl","verify","-no-CApath","-no-CAstore","-CAfile",str(certs / "rds-global-bundle.pem"),candidate.name],capture_output=True)
+        self.assertEqual(accepted.returncode,0)
+        self.assertNotEqual(wrong.returncode,0)
+
     def test_local_contract_cannot_be_used_as_an_arbitrary_endpoint_or_in_production(self):
         for endpoint in ["https://provider:8090", "http://example.invalid", "http://provider:8090/path", "http://private@provider:8090", "http://provider:8090?q=private"]:
             with self.subTest(endpoint=endpoint), self.assertRaises(ImproperlyConfigured):

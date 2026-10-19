@@ -64,7 +64,6 @@ def session(request):
 
 
 def consume_bucket(key, limit, expires_at):
-    RateBucket.objects.filter(expires_at__lt=timezone.now()).delete()
     RateBucket.objects.get_or_create(key=key, defaults={"expires_at": expires_at})
     return bool(RateBucket.objects.filter(key=key, count__lt=limit).update(count=F("count") + 1))
 
@@ -272,6 +271,16 @@ def jobs(request):
 
 
 def admit_jobs(request):
+    from .admission import AdmissionDenied
+    try:
+        return _admit_jobs(request)
+    except AdmissionDenied as exc:
+        response = error(request, exc.message, exc.status)
+        response["Retry-After"] = str(exc.retry_after)
+        return response
+
+
+def _admit_jobs(request):
     if not request.user.is_authenticated:
         return error(request, "Sign in to continue.", 401)
     if request.method == "GET":
@@ -321,15 +330,19 @@ def admit_jobs(request):
             if document.upload_lease_until and document.upload_lease_until > now:
                 return accepted_job(job)
         else:
+            from .admission import reserve_admission
+            # Same-key recovery above never charges deployment or owner supply twice.
+            reserve_admission(request.user.pk, now)
             if not consume_bucket(f"match:{request.user.pk}:{now.date()}", settings.MATCH_DAILY_LIMIT, now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)):
-                return error(request, "Daily matching limit reached. Try again tomorrow (UTC).", 429)
+                from .admission import AdmissionDenied
+                raise AdmissionDenied("Daily matching limit reached. Try again tomorrow (UTC).", 429, 60)
             if source:
                 document_id = uuid.uuid4()
                 document = Document.objects.create(id=document_id, owner=request.user, object_key=f"originals/{document_id}",
                     filename=source[1], content_type=source[2], size_bytes=len(source[0]), sha256=identity["sha256"],
                     expires_at=now + timedelta(days=settings.DOCUMENT_RETENTION_DAYS),
                     upload_deadline=now + timedelta(seconds=settings.DOCUMENT_UPLOAD_TTL_SECONDS))
-            job = Job.objects.create(owner=request.user, document=document, reprocess=reprocess,
+            job = Job.objects.create(owner=request.user, document=document, reprocess=reprocess, admission_reserved=True,
                 idempotency_key=key, payload_hash=fingerprint, job_title=title, requirements=requirements, resume_text="",
                 provider=settings.MATCH_PROVIDER, request_id=request.request_id,
                 status=Job.Status.UPLOADING if source else Job.Status.QUEUED,
@@ -344,6 +357,8 @@ def admit_jobs(request):
             document.save(update_fields=["upload_lease", "upload_lease_until"])
     if source:
         try:
+            from .admission import release_database
+            release_database()
             put_original(document, source[0])
         except DocumentUnavailable:
             Document.objects.filter(pk=document.pk, upload_lease=lease).update(upload_lease_until=timezone.now())
@@ -417,6 +432,8 @@ def document_download(request, document_id):
     if document is None:
         return error(request, "Document is not available for download.", 404)
     try:
+        from .admission import release_database
+        release_database()
         data = get_original(document)
     except DocumentUnavailable:
         return error(request, "Document safety verification is unavailable. Try again later.", 503)

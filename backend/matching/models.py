@@ -1,7 +1,7 @@
 import uuid
 from django.conf import settings
 from django.db import models, transaction
-from django.db.models.signals import post_delete
+from django.db.models.signals import post_delete, pre_delete
 from django.dispatch import receiver
 
 
@@ -69,6 +69,7 @@ class Job(TrackedMutation):
     owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
     document = models.ForeignKey("Document", null=True, blank=True, on_delete=models.PROTECT, related_name="jobs")
     reprocess = models.BooleanField(default=False)
+    admission_reserved = models.BooleanField(default=False)
     idempotency_key = models.UUIDField()
     payload_hash = models.CharField(max_length=64)
     job_title = models.CharField(max_length=120)
@@ -92,7 +93,10 @@ class Job(TrackedMutation):
             models.UniqueConstraint(fields=["owner", "idempotency_key"], name="job_owner_idempotency"),
             models.CheckConstraint(condition=models.Q(attempts__lte=3), name="job_attempt_cap"),
         ]
-        indexes = [models.Index(fields=["owner", "-created_at", "-id"]), models.Index(fields=["status", "wake_at"])]
+        indexes = [models.Index(fields=["owner", "-created_at", "-id"]), models.Index(fields=["status", "wake_at"]),
+                   models.Index(fields=["status", "created_at"], name="job_queue_age"),
+                   models.Index(fields=["owner", "status"], name="job_owner_active"),
+                   models.Index(fields=["status", "created_at"], condition=models.Q(admission_reserved=True), name="job_reserved_repair")]
 
 
 class OutboxEvent(models.Model):
@@ -211,3 +215,27 @@ def account_after_save(sender, instance, **kwargs):
     if getattr(instance, "_stream_auth_changed", False):
         from .events import record_change
         record_change(instance.pk, "workspace.changed")
+
+
+class AdmissionHealth(models.Model):
+    """One short admission mutex; no work or network I/O is done under this lock."""
+    key = models.CharField(primary_key=True, max_length=16, default="jobs")
+    active = models.PositiveIntegerField(default=0)
+    rate_second = models.BigIntegerField(default=0)
+    rate_count = models.PositiveIntegerField(default=0)
+    sampled_at = models.DateTimeField(null=True)
+    oldest_queued_at = models.DateTimeField(null=True)
+    queued_sample = models.PositiveIntegerField(default=0)
+    broker_ready = models.BooleanField(default=False)
+    worker_ready = models.BooleanField(default=False)
+
+
+class WorkerSupply(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4)
+    last_seen = models.DateTimeField(db_index=True)
+
+
+@receiver(pre_delete, sender=Job)
+def release_deleted_admission(sender, instance, **kwargs):
+    from .admission import release_admission
+    release_admission(instance)

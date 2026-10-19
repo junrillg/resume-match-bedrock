@@ -17,6 +17,7 @@ from .telemetry import emit
 from .documents import document_text, reconcile_documents, DocumentUnavailable, ScanPending
 from .notifications import persist_completion
 from .events import lock_stream
+from .admission import release_admission, release_database
 
 
 def job_event(event, job, stage, **extra):
@@ -26,6 +27,7 @@ def job_event(event, job, stage, **extra):
 
 
 def fail_job(job, code, stage="worker", duration_ms=0):
+    release_admission(job)
     job.status = Job.Status.FAILED
     job.error_code = code
     job.resume_text = ""
@@ -87,6 +89,7 @@ def finish_job(claim, evidence=None, error_code=None, transient=False, duration_
             fail_job(job, "retry_exhausted" if transient else error_code, duration_ms=duration_ms)
         else:
             Match.objects.create(job=job, owner_id=job.owner_id, job_title=job.job_title, score=calculate_score(evidence), provider=job.provider, requirements=evidence, request_id=job.request_id)
+            release_admission(job)
             job.status = Job.Status.SUCCEEDED
             job.resume_text = ""
             job.lease_id = None
@@ -112,6 +115,7 @@ def run_job(job_id):
         text = document_text(claim) if claim.document_id else claim.resume_text
         if claim.provider != "demo":
             emit("provider.requested", request_id=claim.request_id, job_id=claim.id, stage="worker", status="running", attempt=claim.attempts)
+        release_database()
         evidence = extract_evidence(text, claim.requirements, provider=claim.provider,
                                     correlation={"request_id": claim.request_id, "job_id": claim.id})
         if claim.provider != "demo":
@@ -168,21 +172,23 @@ def recover_jobs(limit=100):
     return recovered
 
 
-def publish_job(job_id):
+def publish_job(job_id, producer=None):
     queue = app.amqp.queues["resume.match.quorum"]
-    with app.connection_for_write() as connection:
-        connection.ensure_connection(max_retries=0)
-        with app.amqp.Producer(connection) as producer:
-            app.send_task("matching.process_job", args=[str(job_id)], producer=producer,
-                          queue=queue, routing_key="resume.match.quorum", exchange=queue.exchange,
-                          declare=[queue], serializer="json", delivery_mode=2,
-                          retry=False, mandatory=True, confirm_timeout=3,
-                          ignore_result=True)
+    if producer is None:
+        with app.producer_pool.acquire(block=True, timeout=3) as acquired:
+            acquired.connection.ensure_connection(max_retries=0)
+            return publish_job(job_id, producer=acquired)
+    app.send_task("matching.process_job", args=[str(job_id)], producer=producer,
+                  queue=queue, routing_key="resume.match.quorum", exchange=queue.exchange,
+                  declare=[queue], serializer="json", delivery_mode=2,
+                  retry=False, mandatory=True, confirm_timeout=3,
+                  ignore_result=True)
 
 
-def relay_once(limit=100):
-    reconcile_documents(limit)
-    recover_jobs(limit)
+def relay_once(limit=100, producer=None, *, maintenance=True):
+    if maintenance:
+        reconcile_documents(limit)
+        recover_jobs(limit)
     sent = 0
     for _ in range(limit):
         with transaction.atomic():
@@ -191,11 +197,16 @@ def relay_once(limit=100):
                 break
             metadata = Job.objects.filter(pk=event.job_id).values("request_id", "attempts").first() or {}
             try:
-                publish_job(event.job_id)
+                if producer is None:
+                    publish_job(event.job_id)
+                else:
+                    publish_job(event.job_id, producer=producer)
             except Exception:
                 transaction.on_commit(partial(emit, "job.publish_failed", job_id=event.job_id,
                                              request_id=metadata.get("request_id"), stage="relay", status="unpublished",
                                              attempt=metadata.get("attempts"), error_code="publish_unavailable"))
+                if producer is not None:
+                    raise
                 break
             event.sent_at = timezone.now()
             event.save(update_fields=["sent_at"])

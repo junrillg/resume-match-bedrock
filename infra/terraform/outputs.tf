@@ -36,3 +36,17 @@ output "document_bucket" {
 output "document_scan_plan" {
   value = { arn = aws_guardduty_malware_protection_plan.originals.arn, status = aws_guardduty_malware_protection_plan.originals.status }
 }
+
+output "event_delivery" {
+  description = "Identifiers and configured limits only; neither a deployment nor a capacity measurement."
+  value = {
+    gateway_service          = try(aws_ecs_service.main["gateway"].name, null)
+    stream_path              = "/api/events/"
+    fanout_shard_count       = var.fanout_shards
+    gateway_connection_limit = var.gateway_connections
+    service_capacity         = var.service_capacity
+    rollout_task_ips         = local.rollout_tasks
+    rollout_vcpu             = local.rollout_vcpu
+    proxy_client_budget      = local.proxy_rollout_clients
+  }
+}

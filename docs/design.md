@@ -29,9 +29,10 @@ or an in-memory durability substitute. [Delivery design and measured local envel
 The local run verifies 1,000 connected owners and one real queued comparison. It does
 not measure the target processing rate or million-user capacity. Deployment sizes and
 capacity evidence remain distinct from the implemented mechanisms.
-The next deployment milestone follows [ADR 0010](decisions/0010-bounded-deployment.md):
+The deployment definition follows [ADR 0010](decisions/0010-bounded-deployment.md):
 small initial replicas, independently scalable SSE/fan-out, bounded database and
-processing supply, and credential-free infrastructure checks.
+processing supply, and credential-free infrastructure checks. Its configuration and
+local mechanisms are verified; no managed-cloud capacity or deployment is implied.
 
 ## Flow and consistency
 
@@ -131,7 +132,8 @@ The event-delivery milestone is governed by [ADR 0009](decisions/0009-event-driv
 recovery and bounded event-driven reads. Its deployment target and measured local
 capacity are separate. The local implementation replaces recurring browser polling
 with SSE signals and targeted authorized reads. Stream heartbeats do not query the
-database; fan-out recovery reconciles the durable revision ledger. Terraform wiring
-and the detailed public topology update remain separate delivery milestones.
+database; fan-out recovery reconciles the durable revision ledger. Terraform defines
+that same path with small initial capacity. The detailed public topology update remains
+a separate delivery milestone.
 
 [ADR 0008](decisions/0008-nonblocking-completion.md) defines the shipped processing, inbox and result routes. Action pending state is separate from worker progress; saved completion notices survive leaving the page. A paused-worker browser run verified a second submission, an unchanged off-route draft, explicit notification access, result refresh, read persistence and completion while the app tab was closed. The design, durable inbox and UI were verified and published as separate milestones.
