@@ -6,6 +6,8 @@ The seven business steps share one durable flow: **1 Submit · 2 Accept · 3 Rel
 
 For the step-by-step API admission lesson, open [_admit_jobs(): four branch-by-branch diagrams](admit-jobs-walkthrough.md). It covers request validation, transaction A, original upload and transaction B.
 
+For the next lesson, open [Relay jobs: high-level walkthrough](relay-jobs-walkthrough.md), starting with the running `relay_jobs` process and following dispatch through RabbitMQ to Celery.
+
 ## End-to-end execution
 
 ![End-to-end execution.](assets/upload-to-score-overview.svg)
