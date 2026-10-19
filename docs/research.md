@@ -125,3 +125,14 @@ Populated-screen checks exposed two release-specific integration details:
   The generated registration now follows the versioned JSON contract; only that
   saved registration was repaired. Final browser reconnect remains pending.
   [pgAdmin 9.17 server import format](https://www.pgadmin.org/docs/pgadmin4/9.17/import_export_servers.html#json-format).
+
+## Nonblocking completion journey · 2026-10-19
+
+| Primary source | Supported behavior | Decision |
+| --- | --- | --- |
+| [Microsoft asynchronous request-reply](https://learn.microsoft.com/en-us/azure/architecture/patterns/asynchronous-request-reply) | Accepted work has a separate status resource; polling can avoid persistent-connection complexity | Separate submission from a resumable processing route; bounded background reads |
+| [Django 5.2 transactions](https://docs.djangoproject.com/en/5.2/topics/db/transactions/) | Post-commit callbacks are outside the outcome transaction | Save notification atomically with terminal job/result |
+| [React useEffect](https://react.dev/reference/react/useEffect) | Cleanup must account for later async responses | Fence session/navigation changes and cancel polling on cleanup |
+| [MDN History API](https://developer.mozilla.org/en-US/docs/Web/API/History_API/Working_with_the_History_API) | pushState/replaceState and popstate support same-document navigation | Processing/results URLs survive refresh and Back |
+
+[ADR 0008](decisions/0008-nonblocking-completion.md) records alternatives, delivery scope and the implementation plan. Polling is a transport choice; keeping users locked on a page is a separate UX decision.

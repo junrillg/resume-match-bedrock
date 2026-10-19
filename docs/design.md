@@ -106,3 +106,7 @@ Existing history is preserved. Research and ADR 0006 were committed before the d
 | Architecture communication | Matching diagrams, source links, operating contracts and evidence |
 
 The [research](research.md) supports these choices. Passing local checks and mocked Terraform plans does not certify cloud operation, high availability or universal production readiness.
+
+## Processing and completion journey
+
+[ADR 0008](decisions/0008-nonblocking-completion.md) plans a dedicated processing route, durable owner inbox and result route. Implementation will separate action pending state from worker progress, preserve navigation and keep completion discoverable after returning. The design, durable inbox, UI and communication milestones are verified and committed separately.
