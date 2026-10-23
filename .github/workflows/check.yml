@@ -1,0 +1,32 @@
+name: Local checks
+
+on: [push, pull_request, workflow_dispatch]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+        with:
+          terraform_version: 1.15.8
+          terraform_wrapper: false
+      - name: Discover commands without Docker access
+        run: DOCKER_HOST=unix:///nonexistent.sock make help
+      - name: Start local synthetic services
+        run: make up
+      - name: Run the shared checks
+        run: make check
+      - name: Stop services, preserving volumes
+        if: always()
+        run: make down

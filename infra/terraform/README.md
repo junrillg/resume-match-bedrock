@@ -10,14 +10,16 @@ Bootstrap remote state separately: existing private encrypted versioned S3 bucke
 
 ## Validate without an account
 
-From `infra/terraform/`:
+From the repository root:
 
 ```sh
-terraform fmt -check -recursive
-terraform init -backend=false -input=false
-terraform validate
-terraform test
+make check-terraform
 ```
+
+This runs native Terraform format checking, initialization with `-backend=false
+-input=false -lockfile=readonly`, validation and plan-only mocked tests. Terraform
+1.15.8 and registry access are required. The same target runs within `make verify`
+and CI’s `make check`; no AWS credentials or cloud calls are needed.
 
 Tests mock AWS/random; every run is plan-only. Initialization downloads providers.
 A normal `terraform plan` contacts AWS and belongs to the reviewed deployment below.

@@ -158,7 +158,8 @@ def main():
                     break
             log_checks[expected_event] = found
         assert all(log_checks.values())
-        report = {"ok": True, "accepted_status": 202, "score": 100, "sse_change_count": len(seen),
+        report = {"ok": True, "job_id": job_id, "request_id": evidence["request_id"],
+                  "accepted_status": 202, "score": 100, "sse_change_count": len(seen),
                   "verified_steps": ["HTTP admission", "confirmed broker dispatch", "worker claim", "local Converse provider",
                                      "saved result and notification", "durable delivery ledger", "SSE completion", "authorized result read"],
                   "correlated_service_logs": log_checks}

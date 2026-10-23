@@ -1,4 +1,4 @@
-"""Check that help/invalid CLI input never reaches Docker or creates local state."""
+"""Check CLI side effects, Compose command boundaries and private viewer setup."""
 import os
 from pathlib import Path
 import subprocess
@@ -33,6 +33,7 @@ class StartupBoundaryTests(unittest.TestCase):
         (root / "scripts").mkdir()
         script = root / "scripts" / "lab"
         shutil.copyfile(Path(__file__).with_name("lab"), script)
+        script.chmod(0o700)
         binary = root / "bin"
         binary.mkdir()
         (binary / "docker").write_text("#!/bin/sh\nexit 0\n")
@@ -80,6 +81,112 @@ class StartupBoundaryTests(unittest.TestCase):
             result = subprocess.run(["sh", str(script), "up"], env=env, capture_output=True, text=True)
             self.assertNotEqual(result.returncode, 0)
             self.assertEqual((root / "private-target").read_text(), original)
+
+    def test_build_and_restart_preserve_environment_and_propagate_failures(self):
+        cases = [
+            ("build", "", 0, ["compose config --quiet|", "compose build|1"]),
+            ("build", "compose config --quiet", 42, ["compose config --quiet|"]),
+            ("build", "compose build", 42, ["compose config --quiet|", "compose build|1"]),
+            ("restart", "", 0, ["compose restart|", "compose up -d --wait --wait-timeout 900|"]),
+            ("restart", "compose restart", 42, ["compose restart|"]),
+            ("restart", "compose up -d --wait --wait-timeout 900", 42,
+             ["compose restart|", "compose up -d --wait --wait-timeout 900|"]),
+            ("down", "", 0, ["compose down|"]),
+        ]
+        for action, failure, status, expected in cases:
+            with self.subTest(action=action, failure=failure), tempfile.TemporaryDirectory() as directory:
+                root, script, env = self.scaffold(directory)
+                state = root / ".env"
+                original = "POSTGRES_PASSWORD=preserve-synthetic-value\nCUSTOM_SETTING=unchanged\n"
+                state.write_text(original)
+                state.chmod(0o640)
+                log = root / "docker-calls"
+                (root / "bin" / "docker").write_text(
+                    '#!/bin/sh\n'
+                    '[ "$1" != info ] || exit 0\n'
+                    'printf "%s|%s\\n" "$*" "${COMPOSE_PARALLEL_LIMIT:-}" >> "$DOCKER_CALL_LOG"\n'
+                    '[ "$*" != "$FAIL_DOCKER_COMMAND" ] || exit 42\n'
+                )
+                env.update(DOCKER_CALL_LOG=str(log), FAIL_DOCKER_COMMAND=failure,
+                           COMPOSE_PARALLEL_LIMIT="")
+                result = subprocess.run(["sh", str(script), action], env=env,
+                                        capture_output=True, text=True)
+                self.assertEqual(result.returncode, status, result.stderr)
+                self.assertEqual(log.read_text().splitlines(), expected)
+                self.assertEqual(state.read_text(), original)
+                self.assertEqual(state.stat().st_mode & 0o777, 0o640)
+                self.assertNotIn("preserve-synthetic-value", result.stdout + result.stderr)
+                self.assertFalse(list(root.glob(".env.init.*")))
+
+    def test_build_does_not_initialize_environment(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root, script, env = self.scaffold(directory)
+            result = subprocess.run(["sh", str(script), "build"], env=env,
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertFalse((root / ".env").exists())
+
+    def test_make_default_and_help_do_not_touch_docker_or_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root, _, env = self.scaffold(directory)
+            shutil.copyfile(Path(__file__).resolve().parents[1] / "Makefile", root / "Makefile")
+            (root / "help").touch()
+            (root / "bin" / "docker").write_text(
+                '#!/bin/sh\nprintf unexpected-docker-call >&2\nexit 99\n')
+            env["DOCKER_HOST"] = "unix:///nonexistent/synthetic-docker.sock"
+            before = sorted(path.relative_to(root) for path in root.rglob("*"))
+            for arguments in ([], ["help"]):
+                with self.subTest(arguments=arguments):
+                    result = subprocess.run(["make", *arguments], cwd=root, env=env,
+                                            capture_output=True, text=True)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertIn("Usage: make <target>", result.stdout)
+                    self.assertNotIn("unexpected-docker-call", result.stderr)
+                    self.assertEqual(sorted(path.relative_to(root) for path in root.rglob("*")), before)
+
+    def test_make_phony_targets_propagate_wrapper_failure(self):
+        for target in ("build", "restart", "down"):
+            with self.subTest(target=target), tempfile.TemporaryDirectory() as directory:
+                root, _, env = self.scaffold(directory)
+                shutil.copyfile(Path(__file__).resolve().parents[1] / "Makefile", root / "Makefile")
+                (root / target).touch()
+                log = root / "docker-calls"
+                (root / "bin" / "docker").write_text(
+                    '#!/bin/sh\n'
+                    '[ "$1" != info ] || exit 0\n'
+                    'printf "%s\\n" "$*" >> "$DOCKER_CALL_LOG"\n'
+                    'echo synthetic-docker-failure >&2\nexit 42\n')
+                env["DOCKER_CALL_LOG"] = str(log)
+                result = subprocess.run(["make", target], cwd=root, env=env,
+                                        capture_output=True, text=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("synthetic-docker-failure", result.stderr)
+                expected = "compose config --quiet" if target == "build" else "compose " + target
+                self.assertEqual(log.read_text().splitlines(), [expected])
+                self.assertFalse((root / ".env").exists())
+
+    def test_backend_tests_cannot_prompt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root, script, env = self.scaffold(directory)
+            (root / "bin" / "docker").write_text(
+                '#!/bin/sh\n[ "$1" != info ] || exit 0\nprintf "%s\\n" "$*"\n')
+            result = subprocess.run(["sh", str(script), "test"], env=env,
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.strip(),
+                             "compose run --rm --no-deps -T api python manage.py test matching --noinput")
+
+    def test_sample_delegates_to_local_verifier_and_propagates_failure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root, script, env = self.scaffold(directory)
+            binary = root / "bin" / "python3"
+            binary.write_text('#!/bin/sh\nprintf "%s\\n" "$*"\nexit 42\n')
+            binary.chmod(0o700)
+            result = subprocess.run(["sh", str(script), "sample"], env=env,
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 42)
+            self.assertEqual(result.stdout.strip(), "backend/verify_business_delivery.py --run")
+            self.assertFalse((root / ".env").exists())
 
 
 class PgAdminConfigurationTests(unittest.TestCase):

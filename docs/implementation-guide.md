@@ -8,19 +8,19 @@ Use this reference for source, API and operating contracts. The [architecture](a
 
 | Artifact | Responsibility |
 | --- | --- |
-| [`compose.yaml`](../compose.yaml) and [`scripts/lab`](../scripts/lab) | Startup, resource/health checks, local secrets, sample runtime and test commands |
+| [`Makefile`](../Makefile), [`compose.yaml`](../compose.yaml) and [`scripts/lab`](../scripts/lab) | Startup, resource/health checks, local secrets, sample runtime and test commands |
 | [`storage/start.sh`](../storage/start.sh) / [`backend/init_storage.py`](../backend/init_storage.py) | Private S3-compatible identities, storage startup and bucket initialization |
 | [`backend/init_viewers.py`](../backend/init_viewers.py) / [`viewing/`](../viewing/) | Dedicated inspection roles, private connection files and read-only viewer configuration |
 | [`backend/Dockerfile`](../backend/Dockerfile) / [`frontend/Dockerfile`](../frontend/Dockerfile) | Pinned application build/runtime |
 | [`frontend/nginx.conf`](../frontend/nginx.conf) | Same-origin API and unbuffered stream proxy locally; exact ALB stream routing on ECS |
 | [`infra/terraform/`](../infra/terraform/README.md) | Separate AWS resources and reviewed release/bootstrap process |
 
-The app is <http://127.0.0.1:8088>; OpenObserve is <http://127.0.0.1:5080>. Run `./scripts/lab credentials` in a private terminal. Ignored owner-only `.env` stores generated local credentials; preserve it with initialized volumes. Local HTTP/debug and single-node services must remain restricted to synthetic data. Native object, database, scanner and AMQP ports stay inside Compose; authenticated HTTP viewers are separate loopback endpoints. Allow at least 8 GiB for Docker; the private scanner reserves 4 GiB, needs initial definition downloads and uses AMD64 emulation on ARM64.
+The app is <http://127.0.0.1:8088>; OpenObserve is <http://127.0.0.1:5080>. Run `make credentials` in a private terminal. Ignored owner-only `.env` stores generated local credentials; preserve it with initialized volumes. Local HTTP/debug and single-node services must remain restricted to synthetic data. Native object, database, scanner and AMQP ports stay inside Compose; authenticated HTTP viewers are separate loopback endpoints. Allow at least 8 GiB for Docker; the private scanner reserves 4 GiB, needs initial definition downloads and uses AMD64 emulation on ARM64.
 
 ## Service inspection
 
 `./scripts/lab up` starts every viewer with the business services. Run
-`./scripts/lab credentials` only in a private terminal for the generated passwords.
+`make credentials` only in a private terminal for the generated passwords.
 The ignored owner-only `.env` preserves each separate login; do not replace it while
 retaining initialized volumes. No password belongs in a URL or published screenshot.
 
@@ -206,7 +206,7 @@ The event-driven UI passed **66 frontend tests** and the production build. An ea
 
 ### Search one job across services
 
-Open <http://127.0.0.1:5080> using the viewer login from `./scripts/lab credentials` in your private terminal. Select organization `default`, stream `resume_match`, the submission time range and SQL mode:
+Open <http://127.0.0.1:5080> using the viewer login from `make credentials` in your private terminal. Select organization `default`, stream `resume_match`, the submission time range and SQL mode:
 
 ```sql
 SELECT * FROM "resume_match"
@@ -240,20 +240,51 @@ The OTLP exporter buffers 256 records in batches of 32, schedules every second a
 
 ## Verification commands
 
-```sh
-./scripts/lab test
-docker compose exec -T api python manage.py check
-docker compose exec -T api python manage.py makemigrations --check --dry-run
-```
-
-Frontend checks require Node.js 22.12+ and run one at a time:
+Run from the repository root after `make up`:
 
 ```sh
-cd frontend
-npm ci
-npm test
-npm run build
+make test
+make check-config
+make check-terraform
+# Or run the existing checks together, including image builds:
+make verify
+# Full gate: fails explicitly while required quality/security profiles are absent:
+make check
 ```
+
+Make delegates runtime operations to `scripts/lab` and the native Compose, Django,
+Node and Terraform commands. `make help` needs no Docker daemon, `.env` or network.
+Run `make credentials` only in a private terminal; never in CI or shared output.
+
+`make test` runs the CLI boundary tests, Django suite, Vitest and isolated nginx proxy
+checks sequentially. Django runs in a disposable container using the current built
+image and creates a separate PostgreSQL test database; frontend
+checks use the locked Node build stage in `frontend/Dockerfile`, with no host npm
+installation. Proxy tests create and remove only their temporary containers/network.
+The focused targets are `test-cli`, `test-backend`, `test-frontend` and `test-proxy`.
+Run `make build` before focused backend/config checks after source edits;
+`make verify` includes that build. Re-run `make up` to update the running application.
+
+`make verify` sequences image builds, tests, Compose/Django configuration and migration
+drift, then Terraform format/init/validate and plan-only mocked tests. Terraform 1.15.8
+and registry access are required; no normal plan, apply or AWS calls are included.
+`make check` additionally fails on the unconfigured formatter/linter profiles, backend
+type checking and dependency/secret/source/configuration/container security scans.
+These gates need a separate tooling change; existing checks cannot establish their pass.
+The CI workflow runs the same `make check` after startup and preserves volumes on stop.
+
+`make sample` exercises one disposable synthetic owner's HTTP admission, queue, worker,
+local provider, saved result/inbox and SSE completion. It prints result and correlation
+IDs, then deletes only its fixture originals/records. The expected score is 100%; the
+UI sample is a different input with 80% coverage. Interrupting the sample can leave its
+synthetic fixture pending cleanup. Fault/load scripts remain explicit operator tools;
+ordinary check targets never stop storage/scanning services or run capacity loads.
+
+`make down` removes this project's containers/network while preserving named volumes;
+`make restart` restarts services and waits for readiness without volume deletion.
+Preserve `.env` with those volumes. There is no destructive cleanup or cloud deployment
+target. Compose environment selection is inherited; sample HTTP uses the documented
+local address, so do not point it at a different project or port.
 
 ## Verified local behavior
 

@@ -26,15 +26,33 @@ The local flow uses persistent SeaweedFS S3-compatible storage, ClamAV, PostgreS
 
 The separate AWS Terraform design uses private S3, GuardDuty Malware Protection for S3, ECS/Fargate, RDS with RDS Proxy, Amazon MQ, private encrypted Valkey shards and Bedrock. Official-icon diagrams show their responsibilities. Local execution and mocked configuration checks do not establish AWS deployment or managed-service behavior. [AWS journey →](docs/aws-service-journey.md)
 
-## Run with Docker
+## Run with Make and Docker
+
+Requires GNU Make 3.81+ (including macOS Make), a POSIX shell, Docker Compose with
+`--wait`, Python 3.12+ and `openssl`.
 
 ```sh
-./scripts/lab up
+make help
+make up
+make sample
 ```
 
-Allow at least 8 GiB for Docker; ClamAV reserves 4 GiB and uses AMD64 emulation on ARM64. Initial signature updates require internet access. Open <http://127.0.0.1:8088>; run `./scripts/lab credentials` in your private terminal for generated logins. The synthetic sample returns **80%**. The same startup connects the service viewers below.
+Allow at least 8 GiB for Docker; ClamAV reserves 4 GiB and uses AMD64 emulation on ARM64. Initial signature updates require internet access. Open <http://127.0.0.1:8088>; run `make credentials` in your private terminal for generated logins. The same startup connects the service viewers below.
 
-`./scripts/lab down` preserves volumes. Keep their ignored `.env`; replacing passwords does not update initialized services. `./scripts/lab help` lists commands.
+`make sample` runs a separate disposable synthetic comparison through HTTP, the queue,
+worker and SSE; it reports a 100% score and job/request IDs, then removes its own
+original and fixture records. The UI’s built-in sample remains 80%.
+
+`make down` and `make restart` preserve volumes. Keep their ignored `.env`; replacing
+passwords does not update initialized services. `make logs` follows container output;
+OpenObserve below provides searchable logs. `make help` lists every command.
+
+After startup, `make test` runs the existing automated suites; `make verify` also builds
+images, checks Django configuration/migration drift and validates the credential-free
+Terraform mock plans (Terraform 1.15.8 required). CI invokes `make check`, which also
+reports the missing formatter/linter, backend type and security-scan gates and exits
+nonzero until those are configured. A passing `make verify` is limited to the existing
+checks. [Command details →](docs/implementation-guide.md#verification-commands)
 
 ## Inspect the running flow
 
