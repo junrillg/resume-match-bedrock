@@ -6,6 +6,8 @@ Source snapshot: [`a245bde29f3abede2a61c746a067658e5ca5e22c`](https://github.com
 
 [End-to-end diagrams](upload-to-score-mermaid.md) · [Previous: API admission](admit-jobs-walkthrough.md) · [Notion notebook](https://app.notion.com/p/3fd71e91a0f6816585fdf556f98829ab)
 
+[Interactive illustration](assets/resume-match-interactive.html) · Use **Download raw file** on GitHub, open the saved HTML in your browser, and jump to **Step 5 · Open connection** to follow the publisher and worker connections.
+
 ```mermaid
 flowchart TD
     A["Relay process starts<br>python manage.py relay_jobs"] --> B["Calls relay_once()"]
