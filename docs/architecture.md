@@ -95,30 +95,33 @@ The [AWS service journey](aws-service-journey.md) uses separate Terraform and of
 
 ## Local services and AWS counterparts
 
-The overview preserves the connected local lifecycle and adds a separate **role
-mapping** below it: Compose runs locally; the AWS column is the existing Terraform
-design, source/mock-plan checked and not deployed. AWS icons identify cloud
-counterparts. At the user’s request, the official S3 icon also marks local
-SeaweedFS S3-compatible nodes, with an explicit LOCAL label and compatibility
-legend; it is not a deployed-S3 claim. The check is that each mapped service has
-a labeled local owner, an authentic cloud icon, a source reference and the
-important semantic difference; provisioning and runtime changes are excluded.
+The overview connects the local lifecycle with **AWS design owners inside the
+same nodes**, rather than a separate comparison panel. Solid journey edges show
+local execution; attached AWS DESIGN subsections identify alternative service
+owners, not additional simultaneous calls. Compose runs locally; the existing
+Terraform design is source/mock-plan checked and not deployed. Runtime support
+names the server roles in phases A–C; its diagnostics branch remains outside
+business completion. The official S3 icon also marks explicitly LOCAL SeaweedFS
+S3-compatible nodes, with a compatibility legend rather than a deployed-S3 claim.
+Each service annotation has a visible lifecycle/runtime anchor, authentic logo,
+source reference and important semantic difference. Provisioning and runtime
+changes are excluded.
 
 | Visible mapping anchor | Local → AWS design | Source evidence and boundary |
 | --- | --- | --- |
-| `map-compute` · A–C | Compose application processes → ECS on Fargate, behind ALB | [Compose](../compose.yaml), [compute.tf](../infra/terraform/compute.tf), [ingress.tf](../infra/terraform/ingress.tf); Python runtimes remain separate roles |
-| `map-originals` · phases A / D | SeaweedFS S3 API → private Amazon S3 + SSE-KMS | [documents.client](../backend/matching/documents.py), [documents.tf](../infra/terraform/documents.tf); API compatibility does not establish managed durability |
-| `map-safety` · step 5 | ClamAV after GET → GuardDuty for S3 clean tag before GET | [documents.get_original / scan_bytes](../backend/matching/documents.py), [documents.tf](../infra/terraform/documents.tf); different engine and scan ordering, both fail closed |
-| `map-records` · steps 2 / 6 | PostgreSQL → RDS PostgreSQL + RDS Proxy | [data.tf](../infra/terraform/data.tf), [database_proxy.tf](../infra/terraform/database_proxy.tf); SQL owns results and replay in both environments |
-| `map-queue` · step 4 | RabbitMQ quorum queue → Amazon MQ for RabbitMQ | [celery.py](../backend/config/celery.py), [data.tf](../infra/terraform/data.tf); same UUID job contract, different failover guarantees |
-| `map-fanout` · phase C | Two Valkey shards → ElastiCache for Valkey groups | [Compose](../compose.yaml), [fanout.tf](../infra/terraform/fanout.tf); ephemeral wakeups/leases, not result storage |
-| `map-evidence` · step 5 | Local deterministic HTTP Converse fixture → Amazon Bedrock Converse | [services.py](../backend/matching/services.py), [compute.tf](../infra/terraform/compute.tf), [identity.tf](../infra/terraform/identity.tf); fixture execution does not validate model quality |
-| `map-operations` · Support | OpenObserve via OTLP → CloudWatch logs/alarms | [Compose](../compose.yaml), [monitoring.tf](../infra/terraform/monitoring.tf), [data.tf](../infra/terraform/data.tf); diagnostics stay outside business completion |
+| `overview-runtime-support` · A–C | Compose application processes → ECS on Fargate, behind ALB | [Compose](../compose.yaml), [compute.tf](../infra/terraform/compute.tf), [ingress.tf](../infra/terraform/ingress.tf); Python runtimes remain separate roles |
+| `original` AWS subsection · phases A / D | SeaweedFS S3 API → private Amazon S3 + SSE-KMS | [documents.client](../backend/matching/documents.py), [documents.tf](../infra/terraform/documents.tf); API compatibility does not establish managed durability |
+| `process` AWS safety subsection · step 5 | ClamAV after GET → GuardDuty for S3 clean tag before GET | [documents.get_original / scan_bytes](../backend/matching/documents.py), [documents.tf](../infra/terraform/documents.tf); different engine and scan ordering, both fail closed |
+| `save` AWS subsection · steps 2 / 6 | PostgreSQL → RDS PostgreSQL + RDS Proxy | [data.tf](../infra/terraform/data.tf), [database_proxy.tf](../infra/terraform/database_proxy.tf); SQL owns results and replay in both environments |
+| `queue` AWS subsection · step 4 | RabbitMQ quorum queue → Amazon MQ for RabbitMQ | [celery.py](../backend/config/celery.py), [data.tf](../infra/terraform/data.tf); same UUID job contract, different failover guarantees |
+| `fanout` AWS subsection · phase C | Two Valkey shards → ElastiCache for Valkey groups | [Compose](../compose.yaml), [fanout.tf](../infra/terraform/fanout.tf); ephemeral wakeups/leases, not result storage |
+| `provider` AWS subsection · step 5 | Local deterministic HTTP Converse fixture → Amazon Bedrock Converse | [services.py](../backend/matching/services.py), [compute.tf](../infra/terraform/compute.tf), [identity.tf](../infra/terraform/identity.tf); fixture execution does not validate model quality |
+| `overview-runtime-support` diagnostics · Support | OpenObserve via OTLP → CloudWatch logs/alarms | [Compose](../compose.yaml), [monitoring.tf](../infra/terraform/monitoring.tf), [data.tf](../infra/terraform/data.tf); diagnostics stay outside business completion |
 
 The cloud lifecycle and supporting identity/network services remain in the
 [AWS service journey](aws-service-journey.md).
 
-Mapping update verified on 11 November 2026: eight source-backed pairs, embedded
+Integrated-owner update verified on 11 November 2026: eight source-backed roles, embedded
 official icons, exact HTML/SVG export, local links and 830px native raster passed
 including one independent material review. No application/runtime changes were made.
 The logo update uses authentic Django, RabbitMQ, Celery, ClamAV, Valkey, Docker
@@ -131,13 +134,13 @@ the explicit S3-compatible local notation in the figure and asset notices.
 [View the standalone SVG](assets/architecture-overview.svg) ·
 [Asset sources and notices](assets/architecture-overview-NOTICE.md).
 
-![Four local lifecycle phases connect source submission through cleanup; a separate official-icon panel maps local services to undeployed AWS counterparts.](assets/architecture-overview.svg)
+![Four local lifecycle phases connect source submission through cleanup, with official AWS design badges attached at their owning service boundaries.](assets/architecture-overview.svg)
 
 This overview answers how a reviewer gets from source input to checked evidence in
 **local Docker Compose**. Seven numbered milestones follow the existing canonical
-steps; the first four dashed frames group lifecycle phases, not deployments.
-The fifth frame maps local roles to the existing AWS design with official icons;
-its paired symbols are not request hops or a deployment claim. Cards identify
+steps; four dashed frames group lifecycle phases, not deployments.
+Attached AWS DESIGN subsections and the server-role support annotation identify
+equivalent owners without adding request hops or claiming deployment. Cards identify
 real runtime owners. PostgreSQL references denote the same database. Solid arrows
 carry requests/data; dashed arrows carry asynchronous wakes or change identifiers.
 

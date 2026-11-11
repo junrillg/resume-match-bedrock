@@ -42,14 +42,15 @@ third-party marks.
 | Docker Compose | [Official asset](https://raw.githubusercontent.com/docker/docs/75a95460ce3cc8db87a23893490ec331506d08fd/assets/icons/Compose.svg) | `b93745a2bf0aa385757e1ee37a01b9a5c6bf9d561b9aff044b8d40435e82490f` | Official Docker documentation product icon; [Docker trademark guidelines](https://www.docker.com/legal/trademark-guidelines/). Docker marks belong to Docker, Inc. |
 | OpenObserve | [Official asset](https://raw.githubusercontent.com/openobserve/openobserve/0a13b5367d4f1137204c46b923a0296aeda1b8b8/web/src/assets/images/common/mini_logo.svg) | `2ffba497e2be7c99358a0d46ce6886cae024b0812154e9552eec3d409c26831a` | Official OpenObserve source mark; [source license](https://github.com/openobserve/openobserve/blob/0a13b5367d4f1137204c46b923a0296aeda1b8b8/LICENSE). OpenObserve marks retain their owners’ rights |
 
-## AWS counterpart panel
+## Integrated AWS design annotations
 
-The added panel identifies **AWS design counterparts**, not deployed services or
-local product branding. It embeds these eight existing official AWS marks from
+AWS DESIGN subsections are attached to the local lifecycle nodes and server-role
+support annotation. They identify equivalent owners, not additional local calls
+or deployed services. The figure embeds these eight existing official AWS marks from
 [the repository icon inventory](aws/NOTICE.md): ECS, S3, GuardDuty, RDS, MQ,
 ElastiCache, Bedrock and CloudWatch. Exact archive paths and SHA-256 hashes remain
 in that inventory; original paths, fills and proportions are preserved, while
-inline SVG IDs are prefixed `overview-aws-` to prevent collisions. No new icon
+inline SVG IDs are prefixed `overview-integrated-` to prevent collisions. No new icon
 library or remote render dependency was added.
 
 [AWS architecture-icon guidance](https://aws.amazon.com/architecture/icons/) was
