@@ -147,7 +147,7 @@ review and corrections. Browser-only checks remain explicit if access is unavail
 | Identity | Implemented, raster-inspected | Original source-document/evidence-seal [logo](assets/logo.svg); existing palette retained; 32/88 px inspections passed. |
 | README and participation | Implemented, source-checked | [README](../README.md), [contributing](../CONTRIBUTING.md); commands, real workflow target and provider boundaries checked against source. |
 | Product proof and first use | Executed and verified | `make up` completed; `make sample` returned 202, score 100, eight SSE changes and successful fixture/original cleanup. Selected actual JSON fields appear in README. |
-| System explanation | Implemented, source/raster-checked | Connected [local overview](assets/architecture-overview.html) and source coverage ledger in [architecture](architecture.md); AWS remains a separately labeled design. |
+| System explanation | Implemented, source/raster-checked | Connected [local overview](assets/architecture-lifecycle.html) and source coverage ledger in [architecture](architecture.md); AWS remains a separately labeled design. |
 | GitHub metadata | Prepared locally | Proposed values below; no remote settings changed. |
 | Rendering | Partly verified; browser blocked | Native SVG raster inspection available. Browser inventory returned “browser access host is unavailable”; desktop/mobile light/dark README and HTML interaction checks remain unverified. |
 | License and security policy | MIT implemented; reporting channel owner-deferred | Owner selected MIT; [LICENSE](../LICENSE) added. Vendor asset notices retained. No private reporting channel or maintainer commitment invented. |

@@ -130,11 +130,11 @@ the explicit S3-compatible local notation in the figure and asset notices.
 
 ## Connected overview and coverage
 
-[Open the editable, scrollable overview](assets/architecture-overview.html) ·
-[View the standalone SVG](assets/architecture-overview.svg) ·
-[Asset sources and notices](assets/architecture-overview-NOTICE.md).
+[Open the editable, scrollable overview](assets/architecture-lifecycle.html) ·
+[View the standalone SVG](assets/architecture-lifecycle.svg) ·
+[Asset sources and notices](assets/architecture-lifecycle-NOTICE.md).
 
-![Four local lifecycle phases connect source submission through cleanup, with official AWS design badges attached at their owning service boundaries.](assets/architecture-overview.svg)
+![Four local lifecycle phases connect source submission through cleanup, with official AWS design badges attached at their owning service boundaries.](assets/architecture-lifecycle.svg)
 
 This overview answers how a reviewer gets from source input to checked evidence in
 **local Docker Compose**. Seven numbered milestones follow the existing canonical
@@ -181,8 +181,8 @@ closing SVG also encloses the nested React mark):
 ```sh
 python3 - <<'PYEXPORT'
 from pathlib import Path
-source = Path('docs/assets/architecture-overview.html').read_text()
-Path('docs/assets/architecture-overview.svg').write_text(
+source = Path('docs/assets/architecture-lifecycle.html').read_text()
+Path('docs/assets/architecture-lifecycle.svg').write_text(
     source[source.index('<svg'):source.rindex('</svg>') + 6] + '\n'
 )
 PYEXPORT

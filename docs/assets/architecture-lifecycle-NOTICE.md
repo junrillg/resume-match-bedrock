@@ -1,7 +1,7 @@
 # Architecture overview assets
 
-The [editable HTML](architecture-overview.html) is authoritative; its inline SVG is
-exported unchanged to [architecture-overview.svg](architecture-overview.svg).
+The [editable HTML](architecture-lifecycle.html) is authoritative; its inline SVG is
+exported unchanged to [architecture-lifecycle.svg](architecture-lifecycle.svg).
 All rendering assets are embedded. Text and function pictograms remain editable;
 the official PostgreSQL mark is an embedded PNG, not a traced approximation.
 

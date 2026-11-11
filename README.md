@@ -70,9 +70,9 @@ If the sample fails because ClamAV loaded stale signatures, let its update finis
 
 ## How it works
 
-[![Résumé Match local lifecycle with integrated AWS design owners: SeaweedFS to S3, PostgreSQL to RDS, RabbitMQ to MQ, and other cloud roles.](docs/assets/architecture-overview.svg)](docs/architecture.md)
+[![Résumé Match local lifecycle with integrated AWS design owners: SeaweedFS to S3, PostgreSQL to RDS, RabbitMQ to MQ, and other cloud roles.](docs/assets/architecture-lifecycle.svg)](docs/architecture.md)
 
-*Connected local lifecycle with official AWS icons attached at their service boundaries; cloud design is not deployed. [Open the full-size, horizontally scrollable diagram →](docs/assets/architecture-overview.html)*
+*Connected local lifecycle with official AWS icons attached at their service boundaries; cloud design is not deployed. [Open the full-size, horizontally scrollable diagram →](docs/assets/architecture-lifecycle.html)*
 
 React submits the selected source and requirements to Django. For new uploads, Django reserves identity in PostgreSQL, stores the original in SeaweedFS, then commits the queued job and outbox. A separate relay publishes only the job UUID to RabbitMQ. The Celery worker verifies the original, passes ClamAV checks, extracts evidence through the provider, and validates quotes before committing the report, notification, and durable change event.
 
@@ -96,4 +96,4 @@ Use synthetic data only with the local HTTP/debug, single-node runtime. PDF/TXT 
 
 One million connected users and 100 comparisons/second are planning inputs, not demonstrated capacity. Cloud deployment, failover, federation, backup restoration, and model evaluation require separate acceptance evidence. [Measured local envelope →](docs/decisions/0009-event-driven-completion.md)
 
-Licensed under [MIT](LICENSE). Third-party marks retain their owners’ terms; see the [architecture asset notices](docs/assets/architecture-overview-NOTICE.md) and [AWS icon notices](docs/assets/aws/NOTICE.md). No private vulnerability-reporting channel is currently documented; do not include credentials, candidate data, or sensitive vulnerability details in public reports.
+Licensed under [MIT](LICENSE). Third-party marks retain their owners’ terms; see the [architecture asset notices](docs/assets/architecture-lifecycle-NOTICE.md) and [AWS icon notices](docs/assets/aws/NOTICE.md). No private vulnerability-reporting channel is currently documented; do not include credentials, candidate data, or sensitive vulnerability details in public reports.
