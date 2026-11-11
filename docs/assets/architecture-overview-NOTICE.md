@@ -16,11 +16,31 @@ the PostgreSQL Community Association of Canada. React marks belong to their owne
 The marks identify actual technologies; no sponsorship or endorsement is implied.
 RabbitMQ is a trademark of Broadcom, Inc. in the U.S. and other countries.
 
-Django, SeaweedFS, RabbitMQ, Celery, ClamAV and Valkey use labeled function
-pictograms rather than vendor logos. No reliable redistributable mark was adopted
-for those nodes; in particular, RabbitMQ's [guidelines](https://www.rabbitmq.com/trademark-guidelines)
-restrict logo use. The symbols represent functions, not approximations of those marks.
-The local HTTP Converse fixture is not represented by a Bedrock service icon.
+Technology nodes now use their actual product marks. Relay, custom HTTP fixture,
+SSE gateway and lifecycle actions retain original function pictograms. The S3
+icon on explicitly **LOCAL · SeaweedFS** nodes is the user-requested notation for
+S3 API compatibility; it does not identify SeaweedFS as Amazon software or claim
+an AWS S3 deployment. The custom local Converse fixture is not a deployed Bedrock
+model.
+
+## Local product marks
+
+Retrieved 11 November 2026. Vendor colors and geometry are retained; SVG metadata
+is sanitized, IDs namespaced, PNG bytes embedded unchanged, and each mark is scaled
+proportionately. The white Django compact mark has an added dark backing and links
+to the Django project website. These marks identify the actual technologies, with
+no sponsorship or endorsement. The application MIT license does not relicense
+third-party marks.
+
+| Product | Exact source | SHA-256 | Terms / attribution |
+| --- | --- | --- | --- |
+| Django | [Official asset](https://static.djangoproject.com/img/logo-dj.svg) | `54d88ff189e20c05a187ad88dd05c509cd9deb4b996708038860a874e74da040` | [DSF logo standards](https://www.djangoproject.com/community/logos/) and [service-identification terms](https://www.djangoproject.com/trademarks/); Django is a registered trademark of the Django Software Foundation |
+| RabbitMQ | [Official asset](https://www.rabbitmq.com/assets/files/rabbitmq-logo-e91cacd38fcef5219149bc5cfa10b384.svg) | `5c83f8a9819ca280dd32eef7e79c567a071dddc6a66a120b5d1511f286766749` | [Broadcom trademark guidelines](https://www.rabbitmq.com/trademark-guidelines); official unaltered logo, requested for this technology diagram. The guidelines restrict logo use; no general redistribution permission is asserted. RabbitMQ is a trademark of Broadcom, Inc. in the U.S. and other countries |
+| Celery | [Official asset](https://raw.githubusercontent.com/celery/celery/v5.5.3/docs/images/celery_512.png) | `f7bcf453ee5f27a9fabd4bcaf9cebea3459811771c043833c8a9919b45f7333a` | Logo by Ty Wilkins; [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) per the [logo record](https://commons.wikimedia.org/wiki/File:Celery_logo.png) and [documentation copyright](https://docs.celeryq.dev/en/stable/copyright.html). Original PNG unmodified, scaled for display; this logo retains CC BY-SA 4.0 |
+| Valkey | [Official asset](https://raw.githubusercontent.com/valkey-io/valkey-io.github.io/2c780fc3d1f6441140f1b5c9faac0f0afd9ea09d/static/img/Valkey-logo.svg) | `36a2375e56420a570f6a0346dde019314204c05f5326c0f00d39114e63397f37` | [LF Projects trademark policy](https://lfprojects.org/policies/trademark-policy/); Valkey is a registered trademark of LF Projects, LLC |
+| ClamAV | [Official asset](https://raw.githubusercontent.com/Cisco-Talos/clamav/14915a94cf00ca3a3b7d93b4da050b4dc7f7b76a/logo.png) | `f083e9c704165003f8c065964e4ccb47da48bbad8a80521d571cbf0f1d4762c6` | Official [source repository](https://github.com/Cisco-Talos/clamav); ClamAV is a registered trademark of Cisco Systems, Inc. The software GPL-2.0 license is not asserted as a trademark license |
+| Docker Compose | [Official asset](https://raw.githubusercontent.com/docker/docs/75a95460ce3cc8db87a23893490ec331506d08fd/assets/icons/Compose.svg) | `b93745a2bf0aa385757e1ee37a01b9a5c6bf9d561b9aff044b8d40435e82490f` | Official Docker documentation product icon; [Docker trademark guidelines](https://www.docker.com/legal/trademark-guidelines/). Docker marks belong to Docker, Inc. |
+| OpenObserve | [Official asset](https://raw.githubusercontent.com/openobserve/openobserve/0a13b5367d4f1137204c46b923a0296aeda1b8b8/web/src/assets/images/common/mini_logo.svg) | `2ffba497e2be7c99358a0d46ce6886cae024b0812154e9552eec3d409c26831a` | Official OpenObserve source mark; [source license](https://github.com/openobserve/openobserve/blob/0a13b5367d4f1137204c46b923a0296aeda1b8b8/LICENSE). OpenObserve marks retain their owners’ rights |
 
 ## AWS counterpart panel
 
@@ -35,9 +55,9 @@ library or remote render dependency was added.
 [AWS architecture-icon guidance](https://aws.amazon.com/architecture/icons/) was
 rechecked on 11 November 2026 and permits architecture diagrams and related
 materials. AWS assets retain their owners’ terms; the MIT application license
-does not relicense them. The SeaweedFS node retains its labeled local function
-symbol; only its cloud counterpart uses the official S3 icon. No endorsement or
-cloud deployment is implied.
+does not relicense them. The same official S3 icon also appears on labeled local
+SeaweedFS S3-compatible nodes at the user’s request; the visible legend identifies
+that API-compatibility notation. No endorsement or cloud deployment is implied.
 
 ## React MIT notice
 

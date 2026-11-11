@@ -98,7 +98,9 @@ The [AWS service journey](aws-service-journey.md) uses separate Terraform and of
 The overview preserves the connected local lifecycle and adds a separate **role
 mapping** below it: Compose runs locally; the AWS column is the existing Terraform
 design, source/mock-plan checked and not deployed. AWS icons identify cloud
-counterparts, never a local container. The check is that each mapped service has
+counterparts. At the user’s request, the official S3 icon also marks local
+SeaweedFS S3-compatible nodes, with an explicit LOCAL label and compatibility
+legend; it is not a deployed-S3 claim. The check is that each mapped service has
 a labeled local owner, an authentic cloud icon, a source reference and the
 important semantic difference; provisioning and runtime changes are excluded.
 
@@ -119,6 +121,9 @@ The cloud lifecycle and supporting identity/network services remain in the
 Mapping update verified on 11 November 2026: eight source-backed pairs, embedded
 official icons, exact HTML/SVG export, local links and 830px native raster passed
 including one independent material review. No application/runtime changes were made.
+The logo update uses authentic Django, RabbitMQ, Celery, ClamAV, Valkey, Docker
+Compose and OpenObserve marks, retains the React/PostgreSQL marks, and documents
+the explicit S3-compatible local notation in the figure and asset notices.
 
 ## Connected overview and coverage
 
