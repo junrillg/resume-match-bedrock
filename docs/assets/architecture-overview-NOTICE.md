@@ -22,6 +22,23 @@ for those nodes; in particular, RabbitMQ's [guidelines](https://www.rabbitmq.com
 restrict logo use. The symbols represent functions, not approximations of those marks.
 The local HTTP Converse fixture is not represented by a Bedrock service icon.
 
+## AWS counterpart panel
+
+The added panel identifies **AWS design counterparts**, not deployed services or
+local product branding. It embeds these eight existing official AWS marks from
+[the repository icon inventory](aws/NOTICE.md): ECS, S3, GuardDuty, RDS, MQ,
+ElastiCache, Bedrock and CloudWatch. Exact archive paths and SHA-256 hashes remain
+in that inventory; original paths, fills and proportions are preserved, while
+inline SVG IDs are prefixed `overview-aws-` to prevent collisions. No new icon
+library or remote render dependency was added.
+
+[AWS architecture-icon guidance](https://aws.amazon.com/architecture/icons/) was
+rechecked on 11 November 2026 and permits architecture diagrams and related
+materials. AWS assets retain their owners’ terms; the MIT application license
+does not relicense them. The SeaweedFS node retains its labeled local function
+symbol; only its cloud counterpart uses the official S3 icon. No endorsement or
+cloud deployment is implied.
+
 ## React MIT notice
 
 MIT License

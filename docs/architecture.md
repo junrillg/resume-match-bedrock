@@ -93,24 +93,53 @@ Real Compose checks exercised originals, ClamAV, PostgreSQL, queued processing, 
 The [AWS service journey](aws-service-journey.md) uses separate Terraform and official-icon diagrams. It is source/mock-plan verified, not deployed. Local single-node services do not establish managed failover, capacity, organization identity, backup restoration or model quality. Those checks remain deployment acceptance work.
 
 
+## Local services and AWS counterparts
+
+The overview preserves the connected local lifecycle and adds a separate **role
+mapping** below it: Compose runs locally; the AWS column is the existing Terraform
+design, source/mock-plan checked and not deployed. AWS icons identify cloud
+counterparts, never a local container. The check is that each mapped service has
+a labeled local owner, an authentic cloud icon, a source reference and the
+important semantic difference; provisioning and runtime changes are excluded.
+
+| Visible mapping anchor | Local → AWS design | Source evidence and boundary |
+| --- | --- | --- |
+| `map-compute` · A–C | Compose application processes → ECS on Fargate, behind ALB | [Compose](../compose.yaml), [compute.tf](../infra/terraform/compute.tf), [ingress.tf](../infra/terraform/ingress.tf); Python runtimes remain separate roles |
+| `map-originals` · phases A / D | SeaweedFS S3 API → private Amazon S3 + SSE-KMS | [documents.client](../backend/matching/documents.py), [documents.tf](../infra/terraform/documents.tf); API compatibility does not establish managed durability |
+| `map-safety` · step 5 | ClamAV after GET → GuardDuty for S3 clean tag before GET | [documents.get_original / scan_bytes](../backend/matching/documents.py), [documents.tf](../infra/terraform/documents.tf); different engine and scan ordering, both fail closed |
+| `map-records` · steps 2 / 6 | PostgreSQL → RDS PostgreSQL + RDS Proxy | [data.tf](../infra/terraform/data.tf), [database_proxy.tf](../infra/terraform/database_proxy.tf); SQL owns results and replay in both environments |
+| `map-queue` · step 4 | RabbitMQ quorum queue → Amazon MQ for RabbitMQ | [celery.py](../backend/config/celery.py), [data.tf](../infra/terraform/data.tf); same UUID job contract, different failover guarantees |
+| `map-fanout` · phase C | Two Valkey shards → ElastiCache for Valkey groups | [Compose](../compose.yaml), [fanout.tf](../infra/terraform/fanout.tf); ephemeral wakeups/leases, not result storage |
+| `map-evidence` · step 5 | Local deterministic HTTP Converse fixture → Amazon Bedrock Converse | [services.py](../backend/matching/services.py), [compute.tf](../infra/terraform/compute.tf), [identity.tf](../infra/terraform/identity.tf); fixture execution does not validate model quality |
+| `map-operations` · Support | OpenObserve via OTLP → CloudWatch logs/alarms | [Compose](../compose.yaml), [monitoring.tf](../infra/terraform/monitoring.tf), [data.tf](../infra/terraform/data.tf); diagnostics stay outside business completion |
+
+The cloud lifecycle and supporting identity/network services remain in the
+[AWS service journey](aws-service-journey.md).
+
+Mapping update verified on 11 November 2026: eight source-backed pairs, embedded
+official icons, exact HTML/SVG export, local links and 830px native raster passed
+including one independent material review. No application/runtime changes were made.
+
 ## Connected overview and coverage
 
 [Open the editable, scrollable overview](assets/architecture-overview.html) ·
 [View the standalone SVG](assets/architecture-overview.svg) ·
 [Asset sources and notices](assets/architecture-overview-NOTICE.md).
 
-![Four local lifecycle phases connect source submission, accepted work, checked processing, durable completion and source management.](assets/architecture-overview.svg)
+![Four local lifecycle phases connect source submission through cleanup; a separate official-icon panel maps local services to undeployed AWS counterparts.](assets/architecture-overview.svg)
 
 This overview answers how a reviewer gets from source input to checked evidence in
 **local Docker Compose**. Seven numbered milestones follow the existing canonical
-steps; four dashed frames group lifecycle phases, not deployments. Cards identify
+steps; the first four dashed frames group lifecycle phases, not deployments.
+The fifth frame maps local roles to the existing AWS design with official icons;
+its paired symbols are not request hops or a deployment claim. Cards identify
 real runtime owners. PostgreSQL references denote the same database. Solid arrows
 carry requests/data; dashed arrows carry asynchronous wakes or change identifiers.
 
 The scoped acceptance checks are source-backed transitions, visible recovery and
 cleanup, real runtime boundaries, legible labels at 830px, accessible contained
 scrolling at mobile width, embedded assets and identical HTML/SVG topology.
-Cloud deployment, provisioning, capacity, model quality, low-level HTTP exchanges
+Cloud counterpart mapping is included; deployment, provisioning, capacity, model quality, low-level HTTP exchanges
 and operator viewer internals remain in their existing references.
 
 | ID / phase and visible anchor | Actor / owner and transformation | Store / handoff; next or alternative | Source evidence |

@@ -70,9 +70,9 @@ If the sample fails because ClamAV loaded stale signatures, let its update finis
 
 ## How it works
 
-[![Résumé Match local lifecycle: submit a source, accept durable work, process checked evidence, and deliver the saved report.](docs/assets/architecture-overview.svg)](docs/architecture.md)
+[![Résumé Match local lifecycle and labeled AWS counterparts: SeaweedFS to S3, PostgreSQL to RDS, RabbitMQ to MQ, and other cloud roles.](docs/assets/architecture-overview.svg)](docs/architecture.md)
 
-*Source-backed illustration. [Open the full-size, horizontally scrollable diagram →](docs/assets/architecture-overview.html)*
+*Local lifecycle plus official-icon AWS counterpart map; cloud design is not deployed. [Open the full-size, horizontally scrollable diagram →](docs/assets/architecture-overview.html)*
 
 React submits the selected source and requirements to Django. For new uploads, Django reserves identity in PostgreSQL, stores the original in SeaweedFS, then commits the queued job and outbox. A separate relay publishes only the job UUID to RabbitMQ. The Celery worker verifies the original, passes ClamAV checks, extracts evidence through the provider, and validates quotes before committing the report, notification, and durable change event.
 
