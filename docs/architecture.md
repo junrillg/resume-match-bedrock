@@ -91,3 +91,62 @@ The synthetic weights Python 3, Django 3, React 2 and unmatched PostgreSQL 2 pro
 Real Compose checks exercised originals, ClamAV, PostgreSQL, queued processing, storage/scanner outages and cleanup. Searchable metadata connects API, relay, worker and the HTTP provider; no document, filename, object key, signed URL or credential is logged. [Log search and evidence →](implementation-guide.md#search-one-job-across-services)
 
 The [AWS service journey](aws-service-journey.md) uses separate Terraform and official-icon diagrams. It is source/mock-plan verified, not deployed. Local single-node services do not establish managed failover, capacity, organization identity, backup restoration or model quality. Those checks remain deployment acceptance work.
+
+
+## Connected overview and coverage
+
+[Open the editable, scrollable overview](assets/architecture-overview.html) ·
+[View the standalone SVG](assets/architecture-overview.svg) ·
+[Asset sources and notices](assets/architecture-overview-NOTICE.md).
+
+![Four local lifecycle phases connect source submission, accepted work, checked processing, durable completion and source management.](assets/architecture-overview.svg)
+
+This overview answers how a reviewer gets from source input to checked evidence in
+**local Docker Compose**. Seven numbered milestones follow the existing canonical
+steps; four dashed frames group lifecycle phases, not deployments. Cards identify
+real runtime owners. PostgreSQL references denote the same database. Solid arrows
+carry requests/data; dashed arrows carry asynchronous wakes or change identifiers.
+
+The scoped acceptance checks are source-backed transitions, visible recovery and
+cleanup, real runtime boundaries, legible labels at 830px, accessible contained
+scrolling at mobile width, embedded assets and identical HTML/SVG topology.
+Cloud deployment, provisioning, capacity, model quality, low-level HTTP exchanges
+and operator viewer internals remain in their existing references.
+
+| ID / phase and visible anchor | Actor / owner and transformation | Store / handoff; next or alternative | Source evidence |
+| --- | --- | --- | --- |
+| A1 `submit` | Reviewer / React: selected PDF, TXT, text or owned source plus weighted requirements → request | Browser draft → HTTP through nginx; saved source can reprocess | [App.tsx](../frontend/src/App.tsx), [nginx.conf](../frontend/nginx.conf) |
+| A2 `accept` | Django authenticates owner, validates input/key and checks finite fresh supply → reservation | PostgreSQL identity; `429`/`503` rejects new work | [views._admit_jobs](../backend/matching/views.py), [admission](../backend/matching/admission.py) |
+| A3 `original` and edge to `relay` | Django stores new exact bytes → finalizes pending document, queued job and outbox | SeaweedFS PUT and SQL commit are separate; saved reuse skips PUT | [views._admit_jobs](../backend/matching/views.py), [documents.put_original](../backend/matching/documents.py) |
+| A4 `receipt`, upload strip | Same-key reviewer retry / Django recovers same-input job | Uploading is a reservation, not storage confirmation; unchanged-input retry or deadline cleanup | [views._admit_jobs](../backend/matching/views.py), [documents.reconcile_documents](../backend/matching/documents.py) |
+| B3–4 `relay` → `queue` | Separate job relay publishes committed UUID through a confirmed producer → RabbitMQ quorum queue | Durable outbox → repeatable UUID delivery, without document content | [jobs.relay_once / publish_job](../backend/matching/jobs.py), [relay_jobs](../backend/matching/management/commands/relay_jobs.py), [celery config](../backend/config/celery.py) |
+| B5 `process` | Celery worker claims lease → fetches original, checks hash and ClamAV, parses/reuses versioned extraction | SeaweedFS → checked text / SQL extraction cache; explicit reprocess skips cache | [jobs.run_job](../backend/matching/jobs.py), [documents.document_text / get_original](../backend/matching/documents.py) |
+| B5 `provider`, HTTP/quotes edges | Worker invokes local HTTP Converse fixture → proposed quotes → literal validation and coverage | Separate provider process; provider does not own the score | [services.extract_evidence / validate_evidence / calculate_score](../backend/matching/services.py), [local_converse](../backend/local_converse.py), [Compose](../compose.yaml) |
+| B recovery `retry` and connecting edges | Transient failure or expired lease → requeue within budget or terminal failure at step 6 | SQL outbox → relay; stale/deleted/expired work cannot overwrite results; unsafe input fails closed | [jobs.finish_job / recover_jobs](../backend/matching/jobs.py), [documents.document_text](../backend/matching/documents.py) |
+| C6 `save` | Worker / PostgreSQL commits fenced terminal outcome, notice and change events atomically | One result per job; failure also saves a notice; no intermediate retry notice | [jobs.finish_job](../backend/matching/jobs.py), [notifications.persist_completion](../backend/matching/notifications.py), [models.TrackedMutation / Match](../backend/matching/models.py) |
+| C `event-relay` → `fanout` → `gateway` | Separate event relay publishes owner wake; two independent Valkey shards wake two raw ASGI gateways | PostgreSQL remains replay truth; gateway subscribes before replay, streams identifiers | [events](../backend/matching/events.py), [event_gateway](../backend/event_gateway.py), [Compose](../compose.yaml) |
+| C7 `read` | React responds with targeted authorized reads → reviewer sees report or failure notice | Active processing page advances; other routes/drafts remain; closed browser finds saved notices later | [workspaceEvents](../frontend/src/workspaceEvents.ts), [App.tsx](../frontend/src/App.tsx), [views](../backend/matching/views.py) |
+| D management strips | Reviewer download/reuse/reprocess/delete or retention expiry → source/result lifecycle | Ready-only owner download; deletion fences access/work before retried physical DELETE; comparison deletion preserves original | [views.document_download / document_detail / job_detail](../backend/matching/views.py), [documents.tombstone / reconcile_documents](../backend/matching/documents.py) |
+| D stream recovery strip | Stream loss / visible tab return → reconnect and replay or fresh snapshot | Saved SQL outcomes survive fan-out loss; no recurring REST polling fallback | [workspaceEvents](../frontend/src/workspaceEvents.ts), [events.replay](../backend/matching/events.py), [event_gateway](../backend/event_gateway.py) |
+
+Artifact checks on 11 November 2026: HTML/SVG byte agreement, unique SVG IDs,
+accessible title/description, embedded marks, absence of scripts/remote rendering
+loads and local links passed. The exact figure was raster-inspected at 830px; labels, arrows, branch continuity
+and vendor marks passed after one bounded independent material review. The page uses a named focusable horizontal
+scroll region and a minimum 830px diagram width; source inspection establishes those
+rules. A real browser/mobile geometry pass remains blocked by the unavailable
+browser host. Source inspection and static rendering do not establish runtime or
+cloud acceptance.
+
+To export after editing the authoritative HTML, extract its outer SVG (the last
+closing SVG also encloses the nested React mark):
+
+```sh
+python3 - <<'PYEXPORT'
+from pathlib import Path
+source = Path('docs/assets/architecture-overview.html').read_text()
+Path('docs/assets/architecture-overview.svg').write_text(
+    source[source.index('<svg'):source.rindex('</svg>') + 6] + '\n'
+)
+PYEXPORT
+```

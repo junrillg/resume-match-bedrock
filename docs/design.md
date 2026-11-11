@@ -127,3 +127,70 @@ database; fan-out recovery reconciles the durable revision ledger. Terraform def
 that same path with small initial capacity. [Delivery topology](architecture.md#7--continue-work-and-return-to-the-outcome) and the [AWS journey](aws-service-journey.md) show both execution and connected delivery.
 
 [ADR 0008](decisions/0008-nonblocking-completion.md) defines the shipped processing, inbox and result routes. Action pending state is separate from worker progress; saved completion notices survive leaving the page. A paused-worker browser run verified a second submission, an unchanged off-route draft, explicit notification access, result refresh, read persistence and completion while the app tab was closed. The design, durable inbox and UI were verified and published as separate milestones.
+
+## Repository presentation · 11 November 2026
+
+Audience: reviewers exploring the evidence workbench and engineers running its local
+synthetic flow. Keep the existing name and product palette (`#172b35`, `#17665f`,
+`#f6f5ef`, `#b9d4bd`). The README follows identity → proof → capabilities → first use →
+system → deeper documentation. Application redesign, cloud deployment, remote settings,
+commit/push and new policy commitments are outside this change.
+
+Acceptance: claims and commands trace to source; the logo works at 32/88 px on light
+and dark grounds; the social PNG matches its editable source and is 1280 × 640 under
+1 MB; local links resolve; the overview represents input, durable acceptance,
+processing, saved outcome, delivery and recovery. Stop after one independent material
+review and corrections. Browser-only checks remain explicit if access is unavailable.
+
+| Surface | Status | Evidence / next action |
+| --- | --- | --- |
+| Identity | Implemented, raster-inspected | Original source-document/evidence-seal [logo](assets/logo.svg); existing palette retained; 32/88 px inspections passed. |
+| README and participation | Implemented, source-checked | [README](../README.md), [contributing](../CONTRIBUTING.md); commands, real workflow target and provider boundaries checked against source. |
+| Product proof and first use | Executed and verified | `make up` completed; `make sample` returned 202, score 100, eight SSE changes and successful fixture/original cleanup. Selected actual JSON fields appear in README. |
+| System explanation | Implemented, source/raster-checked | Connected [local overview](assets/architecture-overview.html) and source coverage ledger in [architecture](architecture.md); AWS remains a separately labeled design. |
+| GitHub metadata | Prepared locally | Proposed values below; no remote settings changed. |
+| Rendering | Partly verified; browser blocked | Native SVG raster inspection available. Browser inventory returned “browser access host is unavailable”; desktop/mobile light/dark README and HTML interaction checks remain unverified. |
+| License and security policy | MIT implemented; reporting channel owner-deferred | Owner selected MIT; [LICENSE](../LICENSE) added. Vendor asset notices retained. No private reporting channel or maintainer commitment invented. |
+
+### Prepared GitHub metadata
+
+- Description: `Résumé evidence workbench with weighted requirements, checked source excerpts, durable background jobs, and a source-grounded AWS Bedrock design.`
+- Homepage: leave unset; no hosted application verified.
+- Topics: `resume-matching`, `evidence-review`, `react`, `django`, `postgresql`, `celery`, `rabbitmq`, `valkey`, `docker-compose`, `aws-bedrock`, `terraform`.
+- Social image: [social-preview.png](assets/social-preview.png), editable [SVG](assets/social-preview.svg). Prepared, not uploaded.
+
+The mark and social source are original project artwork; no vendor marks appear in
+these identity assets. System text uses Arial/Helvetica with system fallback; no fonts
+or image resources load remotely. The social PNG follows the [GitHub image size
+and format guidance](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/customizing-your-repositorys-social-media-preview), checked 11 November 2026.
+
+### Executed checks and remaining limits
+
+`make help`, `make test-cli` (10 tests) and `docker compose config --quiet` passed.
+`make up` built and started the local services with Python 3.13 on PATH. Initial
+sample processing failed closed because clamd had loaded 20-day-old signatures
+before the updated database was available. Restarting only the scanner loaded fresh
+signatures; the repeated `make sample` passed HTTP acceptance, broker dispatch,
+worker/provider execution, saved result/notification, durable ledger, SSE and
+owner-authorized retrieval. Both fixture-record and physical-original cleanup passed.
+The README documents the observed scanner reload workaround; application code is
+unchanged. Default system Python is 3.10 here, so documented Python 3.12+ must be on PATH.
+
+Successful synthetic job: `eac74967-9d2a-49be-a7da-189c34394bd4`; request:
+`1ce1d86e-ec13-479b-aa38-5c3e3421595b`. The app was left running and root HTTP 200
+was verified at `http://127.0.0.1:8088/`. No broader suite or cloud check was run for
+this documentation change. Local success does not establish managed AWS behavior.
+
+The actual social export and logo were inspected using native SVG rasterization;
+ImageMagick's internal SVG renderer was rejected because it omitted strokes and
+misplaced title glyphs. The delivered PNG uses the correctly rendered SVG. Diagram
+raster inspection at 830 px and source/export checks supplement, but do not replace,
+the blocked live browser/mobile/GitHub render checks. One independent material review
+identified retry-branch connectivity and caption containment; those were corrected.
+
+Final static acceptance: 120 changed-document local links/anchors passed; all three
+new SVGs passed XML, unique-ID, accessible-name and embedded-resource checks;
+HTML/SVG export bytes agree. Social PNG is 1280 × 640, 52,279 bytes. `pandoc --from
+gfm --to html` accepted the README; this is parsing evidence, not live GitHub
+rendering. `git diff --check` passed. No new application dependency or exporter
+pipeline was added.
